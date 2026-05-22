@@ -315,6 +315,9 @@ class ReportGenerator:
             False
         )
         
+        # Add Not Enrolled flag (customers without payment)
+        final_report['Not Enrolled'] = final_report['Customer Payment'].isna()
+        
         # 16. Month (extract month name from Updated Date)
         final_report['Month'] = final_report['Updated Date'].apply(
             lambda x: x.strftime('%B').lower() if pd.notna(x) else ''
@@ -325,7 +328,7 @@ class ReportGenerator:
             'Updated Date', 'Customer Name', 'Customer Phone', 'Customer Enrollment Amount',
             'Status', 'Employee Name', 'Referral Code', 'Employee Phone', 'Employee Code',
             'Branch', 'Customer Payment', 'True/False', 'Scheme Name', 'Scheme Passbook Number',
-            'Category', 'Month'
+            'Category', 'Month', 'Not Enrolled'
         ]
         
         # Ensure all columns exist
@@ -335,8 +338,10 @@ class ReportGenerator:
         
         # Show match statistics
         matched_count = final_report['Customer Payment'].notna().sum()
+        not_enrolled_count = final_report['Not Enrolled'].sum()
         if len(final_report) > 0:
             st.info(f"📊 Match Results: {matched_count} out of {len(final_report)} records matched with transactions ({matched_count/len(final_report)*100:.1f}%)")
+            st.info(f"📊 Not Enrolled Customers: {not_enrolled_count} out of {len(final_report)} ({not_enrolled_count/len(final_report)*100:.1f}%)")
         
         # Show category distribution
         category_counts = final_report['Category'].value_counts()
@@ -365,13 +370,14 @@ class ReportGenerator:
             'Customer Enrollment Amount': 'sum',
             'Customer Payment': 'sum',
             'True/False': 'sum',
-            'Employee Name': 'nunique'  # Unique employees who sold this scheme
+            'Employee Name': 'nunique',  # Unique employees who sold this scheme
+            'Referral Code': 'nunique'   # Unique referral codes used
         }).reset_index()
         
         branch_scheme_report.columns = [
             'Branch', 'Scheme Name', 'Number of Customers', 
             'Total Enrollment Amount', 'Total Payment Received', 
-            'Number of Matched Payments', 'Unique Employees'
+            'Number of Matched Payments', 'Unique Employees', 'Unique Referral Codes'
         ]
         
         # Calculate match rate and pending amount
@@ -402,18 +408,18 @@ class ReportGenerator:
             return pd.DataFrame()
         
         # Create branch-employee-scheme report
-        emp_scheme_report = report_data.groupby(['Branch', 'Employee Name', 'Employee Code', 'Scheme Name']).agg({
+        emp_scheme_report = report_data.groupby(['Branch', 'Employee Name', 'Employee Code', 'Referral Code', 'Scheme Name']).agg({
             'Customer Name': 'count',
             'Customer Enrollment Amount': 'sum',
             'Customer Payment': 'sum',
             'True/False': 'sum',
-            'Referral Code': 'nunique'  # Unique referrals made
+            'Customer Phone': 'nunique'  # Unique customers
         }).reset_index()
         
         emp_scheme_report.columns = [
-            'Branch', 'Employee Name', 'Employee Code', 'Scheme Name',
+            'Branch', 'Employee Name', 'Employee Code', 'Referral Code', 'Scheme Name',
             'Number of Customers', 'Total Enrollment Amount', 'Total Payment Received',
-            'Number of Matched Payments', 'Unique Referrals'
+            'Number of Matched Payments', 'Unique Customers'
         ]
         
         # Calculate match rate and average per customer
@@ -450,17 +456,25 @@ class ReportGenerator:
             'Customer Payment': 'sum',
             'True/False': 'sum',
             'Employee Name': 'nunique',
-            'Scheme Name': lambda x: x.notna().sum()  # Count schemes sold
+            'Referral Code': 'nunique',  # Count unique referral codes used
+            'Scheme Name': lambda x: x.notna().sum(),  # Count schemes sold
+            'Not Enrolled': 'sum'  # Count not enrolled customers
         }).reset_index()
         
         branch_summary.columns = [
             'Branch', 'Total Customers', 'Total Enrollment Amount', 
-            'Total Payment Received', 'Matched Payments', 'Unique Employees', 'Schemes Sold'
+            'Total Payment Received', 'Matched Payments', 'Unique Employees', 
+            'Unique Referral Codes', 'Schemes Sold', 'Not Enrolled'
         ]
         
         # Calculate additional metrics
         branch_summary['Match Rate (%)'] = (
             branch_summary['Matched Payments'] / branch_summary['Total Customers'] * 100
+        ).round(2)
+        
+        branch_summary['Enrollment Rate (%)'] = (
+            (branch_summary['Total Customers'] - branch_summary['Not Enrolled']) / 
+            branch_summary['Total Customers'] * 100
         ).round(2)
         
         branch_summary['Pending Amount'] = (
@@ -480,24 +494,29 @@ class ReportGenerator:
         """
         Generate Employee Performance Report (Overall performance by employee)
         """
-        emp_performance = final_report.groupby(['Employee Name', 'Employee Code', 'Branch', 'Category']).agg({
+        emp_performance = final_report.groupby(['Employee Name', 'Employee Code', 'Referral Code', 'Branch', 'Category']).agg({
             'Customer Name': 'count',
             'Customer Enrollment Amount': 'sum',
             'Customer Payment': 'sum',
             'True/False': 'sum',
             'Scheme Name': lambda x: x.notna().sum(),
-            'Referral Code': 'nunique'
+            'Not Enrolled': 'sum'
         }).reset_index()
         
         emp_performance.columns = [
-            'Employee Name', 'Employee Code', 'Branch', 'Category',
+            'Employee Name', 'Employee Code', 'Referral Code', 'Branch', 'Category',
             'Total Customers', 'Total Enrollment Amount', 'Total Payment Received',
-            'Matched Payments', 'Schemes Sold', 'Unique Referrals'
+            'Matched Payments', 'Schemes Sold', 'Not Enrolled'
         ]
         
         # Calculate metrics
         emp_performance['Match Rate (%)'] = (
             emp_performance['Matched Payments'] / emp_performance['Total Customers'] * 100
+        ).round(2)
+        
+        emp_performance['Enrollment Rate (%)'] = (
+            (emp_performance['Total Customers'] - emp_performance['Not Enrolled']) / 
+            emp_performance['Total Customers'] * 100
         ).round(2)
         
         emp_performance['Average Enrollment Amount'] = (
@@ -512,6 +531,86 @@ class ReportGenerator:
         emp_performance = emp_performance.sort_values('Total Customers', ascending=False)
         
         return emp_performance
+    
+    def generate_registration_analysis_report(self, final_report):
+        """
+        Generate Registration Analysis Report
+        Shows registration counts, enrollment status, and not enrolled customers
+        """
+        # Create registration analysis report
+        reg_analysis = final_report.copy()
+        
+        # Add registration status based on payment and status
+        def get_registration_status(row):
+            if pd.notna(row['Customer Payment']):
+                return 'Enrolled (Payment Made)'
+            elif 'joined' in str(row['Status']).lower() or 'scheme joined' in str(row['Status']).lower():
+                return 'Registered but Not Enrolled'
+            elif 'registered' in str(row['Status']).lower() or 'customer register' in str(row['Status']).lower():
+                return 'Registered but Not Enrolled'
+            else:
+                return 'Not Enrolled'
+        
+        reg_analysis['Registration Status'] = reg_analysis.apply(get_registration_status, axis=1)
+        
+        # Summary by branch and status
+        branch_reg_summary = reg_analysis.groupby(['Branch', 'Registration Status']).agg({
+            'Customer Name': 'count',
+            'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum',
+            'Referral Code': 'nunique'  # Count unique referral codes
+        }).reset_index()
+        
+        branch_reg_summary.columns = [
+            'Branch', 'Registration Status', 'Customer Count', 
+            'Total Enrollment Amount', 'Total Payment Received', 'Unique Referral Codes'
+        ]
+        
+        # Pivot table for better visualization
+        branch_reg_pivot = branch_reg_summary.pivot_table(
+            index='Branch',
+            columns='Registration Status',
+            values='Customer Count',
+            fill_value=0
+        ).reset_index()
+        
+        # Add total registrations
+        if 'Enrolled (Payment Made)' in branch_reg_pivot.columns:
+            branch_reg_pivot['Total Enrolled'] = branch_reg_pivot['Enrolled (Payment Made)']
+        else:
+            branch_reg_pivot['Total Enrolled'] = 0
+            
+        if 'Registered but Not Enrolled' in branch_reg_pivot.columns:
+            branch_reg_pivot['Total Registered'] = branch_reg_pivot['Registered but Not Enrolled']
+        else:
+            branch_reg_pivot['Total Registered'] = 0
+            
+        if 'Not Enrolled' in branch_reg_pivot.columns:
+            branch_reg_pivot['Total Not Enrolled'] = branch_reg_pivot['Not Enrolled']
+        else:
+            branch_reg_pivot['Total Not Enrolled'] = 0
+        
+        branch_reg_pivot['Total Customers'] = (
+            branch_reg_pivot['Total Enrolled'] + 
+            branch_reg_pivot['Total Registered'] + 
+            branch_reg_pivot['Total Not Enrolled']
+        )
+        
+        branch_reg_pivot['Enrollment Rate (%)'] = (
+            branch_reg_pivot['Total Enrolled'] / branch_reg_pivot['Total Customers'] * 100
+        ).round(2)
+        
+        # Sort by total customers
+        branch_reg_pivot = branch_reg_pivot.sort_values('Total Customers', ascending=False)
+        
+        # Detailed not enrolled customers list (include referral code)
+        not_enrolled_customers = final_report[final_report['Not Enrolled'] == True].copy()
+        not_enrolled_customers = not_enrolled_customers[[
+            'Customer Name', 'Customer Phone', 'Employee Name', 'Employee Code', 
+            'Referral Code', 'Branch', 'Status', 'Customer Enrollment Amount', 'Updated Date'
+        ]]
+        
+        return branch_reg_pivot, not_enrolled_customers
 
 def main():
     st.set_page_config(page_title="Report Generator System", layout="wide")
@@ -546,6 +645,13 @@ def main():
         padding: 1rem;
         border-radius: 10px;
         border-left: 5px solid #3B82F6;
+        margin: 1rem 0;
+    }
+    .error-box {
+        background-color: #FEE2E2;
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 5px solid #EF4444;
         margin: 1rem 0;
     }
     .report-card {
@@ -642,12 +748,13 @@ def main():
             st.markdown('<div class="success-box">✅ Report generated successfully!</div>', unsafe_allow_html=True)
             
             # Create tabs for different reports
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
                 "📋 Consolidated Report", 
                 "🏢 Branch-wise Scheme Report", 
                 "👥 Branch & Employee Scheme Report",
                 "📊 Branch Summary",
-                "⭐ Employee Performance"
+                "⭐ Employee Performance",
+                "📝 Registration Analysis"
             ])
             
             with tab1:
@@ -656,7 +763,7 @@ def main():
                 
                 # Statistics
                 st.subheader("📊 Report Statistics")
-                col1, col2, col3, col4, col5 = st.columns(5)
+                col1, col2, col3, col4, col5, col6 = st.columns(6)
                 
                 with col1:
                     st.metric("Total Records", len(final_report))
@@ -676,6 +783,10 @@ def main():
                 with col5:
                     match_percent = (matched / len(final_report) * 100) if len(final_report) > 0 else 0
                     st.metric("Match Rate", f"{match_percent:.1f}%")
+                
+                with col6:
+                    not_enrolled = final_report['Not Enrolled'].sum() if 'Not Enrolled' in final_report.columns else 0
+                    st.metric("Not Enrolled", int(not_enrolled))
             
             with tab2:
                 st.subheader("🏢 Branch-wise Scheme Consolidation Report")
@@ -724,7 +835,7 @@ def main():
             
             with tab3:
                 st.subheader("👥 Branch & Employee-wise Scheme Report")
-                st.markdown("Shows scheme performance by branch and individual employees")
+                st.markdown("Shows scheme performance by branch and individual employees (includes Referral Code)")
                 
                 emp_scheme_report = generator.generate_branch_employee_wise_scheme_report(final_report)
                 
@@ -768,12 +879,15 @@ def main():
                     with col5:
                         st.metric("Avg Match Rate", f"{filtered_report['Match Rate (%)'].mean():.1f}%")
                     
-                    # Display the report
-                    st.dataframe(filtered_report, use_container_width=True)
+                    # Display the report with Referral Code
+                    display_columns = ['Branch', 'Employee Name', 'Employee Code', 'Referral Code', 'Scheme Name',
+                                      'Number of Customers', 'Total Enrollment Amount', 'Total Payment Received',
+                                      'Match Rate (%)', 'Average Enrollment Amount']
+                    st.dataframe(filtered_report[display_columns], use_container_width=True)
                     
                     # Top performing employees
                     st.subheader("🏆 Top Performing Employees by Customer Count")
-                    top_employees = emp_scheme_report.groupby('Employee Name').agg({
+                    top_employees = emp_scheme_report.groupby(['Employee Name', 'Referral Code']).agg({
                         'Number of Customers': 'sum',
                         'Total Enrollment Amount': 'sum'
                     }).sort_values('Number of Customers', ascending=False).head(10)
@@ -789,7 +903,7 @@ def main():
                 
                 if len(branch_summary) > 0:
                     # Display metrics
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3, col4, col5 = st.columns(5)
                     with col1:
                         st.metric("Total Branches", len(branch_summary))
                     with col2:
@@ -798,6 +912,8 @@ def main():
                         st.metric("Total Revenue", f"₹{branch_summary['Total Enrollment Amount'].sum():,.2f}")
                     with col4:
                         st.metric("Overall Match Rate", f"{branch_summary['Match Rate (%)'].mean():.1f}%")
+                    with col5:
+                        st.metric("Not Enrolled", branch_summary['Not Enrolled'].sum())
                     
                     # Display the report
                     st.dataframe(branch_summary, use_container_width=True)
@@ -810,8 +926,8 @@ def main():
                         st.bar_chart(top_branches.set_index('Branch')['Total Customers'])
                     
                     with col2:
-                        st.subheader("Top 10 Branches by Revenue")
-                        st.bar_chart(top_branches.set_index('Branch')['Total Enrollment Amount'])
+                        st.subheader("Enrollment Rate by Branch")
+                        st.bar_chart(top_branches.set_index('Branch')['Enrollment Rate (%)'])
                 else:
                     st.info("No branch summary data available")
             
@@ -850,17 +966,97 @@ def main():
                     with col4:
                         st.metric("Average per Employee", f"₹{(filtered_performance['Total Enrollment Amount'].sum() / len(filtered_performance)):,.0f}" if len(filtered_performance) > 0 else "₹0")
                     with col5:
-                        st.metric("Overall Match Rate", f"{filtered_performance['Match Rate (%)'].mean():.1f}%")
+                        st.metric("Avg Enrollment Rate", f"{filtered_performance['Enrollment Rate (%)'].mean():.1f}%")
                     
-                    # Display the report
-                    st.dataframe(filtered_performance, use_container_width=True)
+                    # Display the report with Referral Code column
+                    display_columns = ['Employee Name', 'Employee Code', 'Referral Code', 'Branch', 'Category', 
+                                      'Total Customers', 'Total Enrollment Amount', 'Total Payment Received',
+                                      'Matched Payments', 'Schemes Sold', 'Enrollment Rate (%)', 'Match Rate (%)']
+                    st.dataframe(filtered_performance[display_columns], use_container_width=True)
                     
                     # Top employees
                     st.subheader("🏆 Top 10 Employees by Customer Count")
                     top_employees = filtered_performance.head(10)
-                    st.dataframe(top_employees[['Employee Name', 'Branch', 'Total Customers', 'Total Enrollment Amount', 'Match Rate (%)']], use_container_width=True)
+                    st.dataframe(top_employees[['Employee Name', 'Referral Code', 'Branch', 'Total Customers', 
+                                               'Total Enrollment Amount', 'Enrollment Rate (%)', 'Match Rate (%)']], 
+                                use_container_width=True)
                 else:
                     st.info("No employee performance data available")
+            
+            with tab6:
+                st.subheader("📝 Registration Analysis Report")
+                st.markdown("Shows registration counts, enrollment status, and not enrolled customers")
+                
+                reg_pivot, not_enrolled_customers = generator.generate_registration_analysis_report(final_report)
+                
+                # Registration Summary Dashboard
+                st.subheader("📊 Registration Summary")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Registered Customers", len(final_report))
+                with col2:
+                    enrolled = len(final_report[final_report['Not Enrolled'] == False])
+                    st.metric("Enrolled Customers", enrolled)
+                with col3:
+                    not_enrolled_count = len(not_enrolled_customers)
+                    st.metric("Not Enrolled Customers", not_enrolled_count, delta=f"{(not_enrolled_count/len(final_report)*100):.1f}%")
+                with col4:
+                    enrollment_rate = (enrolled/len(final_report)*100) if len(final_report) > 0 else 0
+                    st.metric("Enrollment Rate", f"{enrollment_rate:.1f}%")
+                
+                # Branch-wise Registration Summary
+                st.subheader("🏢 Branch-wise Registration Status")
+                st.dataframe(reg_pivot, use_container_width=True)
+                
+                # Filter for branch registration view
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Branch Registration Distribution")
+                    branch_reg_chart = reg_pivot.set_index('Branch')[['Total Enrolled', 'Total Registered', 'Total Not Enrolled']]
+                    st.bar_chart(branch_reg_chart)
+                
+                with col2:
+                    st.subheader("Enrollment Rate by Branch")
+                    enrollment_rate_chart = reg_pivot.set_index('Branch')['Enrollment Rate (%)']
+                    st.bar_chart(enrollment_rate_chart)
+                
+                # Not Enrolled Customers List
+                st.subheader("❌ Not Enrolled Customers Details")
+                if len(not_enrolled_customers) > 0:
+                    # Add filters for not enrolled customers
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        branches = ['All'] + sorted(not_enrolled_customers['Branch'].unique().tolist())
+                        filter_branch = st.selectbox("Filter by Branch", branches, key="not_enrolled_branch")
+                    
+                    with col2:
+                        statuses = ['All'] + sorted(not_enrolled_customers['Status'].unique().tolist())
+                        filter_status = st.selectbox("Filter by Status", statuses, key="not_enrolled_status")
+                    
+                    # Apply filters
+                    filtered_not_enrolled = not_enrolled_customers.copy()
+                    if filter_branch != 'All':
+                        filtered_not_enrolled = filtered_not_enrolled[filtered_not_enrolled['Branch'] == filter_branch]
+                    if filter_status != 'All':
+                        filtered_not_enrolled = filtered_not_enrolled[filtered_not_enrolled['Status'] == filter_status]
+                    
+                    # Display metrics for filtered not enrolled
+                    st.markdown(f"**Showing {len(filtered_not_enrolled)} not enrolled customers**")
+                    st.dataframe(filtered_not_enrolled, use_container_width=True)
+                    
+                    # Export not enrolled customers
+                    csv_buffer = io.StringIO()
+                    filtered_not_enrolled.to_csv(csv_buffer, index=False)
+                    st.download_button(
+                        label="📥 Download Not Enrolled Customers (CSV)",
+                        data=csv_buffer.getvalue(),
+                        file_name=f"not_enrolled_customers_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.info("✅ All customers are enrolled! No not enrolled customers found.")
             
             # Export options
             st.subheader("💾 Export All Reports")
@@ -889,6 +1085,13 @@ def main():
                     emp_performance = generator.generate_employee_performance_report(final_report)
                     if len(emp_performance) > 0:
                         emp_performance.to_excel(writer, sheet_name='Employee Performance', index=False)
+                    
+                    # Add registration analysis
+                    reg_pivot, not_enrolled = generator.generate_registration_analysis_report(final_report)
+                    if len(reg_pivot) > 0:
+                        reg_pivot.to_excel(writer, sheet_name='Registration Analysis', index=False)
+                    if len(not_enrolled) > 0:
+                        not_enrolled.to_excel(writer, sheet_name='Not Enrolled Customers', index=False)
                     
                     # Add unmatched records sheet
                     unmatched = final_report[final_report['Customer Payment'].isna()]
