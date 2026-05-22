@@ -143,6 +143,9 @@ class ReportGenerator:
         if has_joined_date or has_registered_date:
             # Apply conditional date logic
             final_report['Updated Date'] = self.referrals_df.apply(self.get_updated_date, axis=1)
+            
+            # Show info about date selection
+            st.info("📅 Date Logic: Using 'Joined Date' for 'Scheme Joined' status and 'Registered Date' for 'Customer Register' status")
         else:
             st.error("❌ Either 'Joined Date' or 'Registered Date' column must exist in Referrals Report")
             return None
@@ -220,6 +223,9 @@ class ReportGenerator:
             final_report['Branch'] = final_report['Raw Branch'].apply(self.transform_branch)
             # Drop the temporary column
             final_report.drop('Raw Branch', axis=1, inplace=True)
+            
+            # Show branch transformation summary
+            st.success("✅ Branch transformation logic applied successfully (Proper Case)")
         else:
             st.warning("⚠️ 'Referral Code' or 'Branch' missing in Employees Report")
             final_report['Branch'] = "Bhima Jewellery - Customer"
@@ -245,6 +251,7 @@ class ReportGenerator:
             # Convert to numeric for comparison
             self.transactions_df['Installment number'] = pd.to_numeric(self.transactions_df['Installment number'], errors='coerce')
             trans_filtered = self.transactions_df[self.transactions_df['Installment number'] == 1].copy()
+            st.info(f"📊 Transactions with Installment number = 1: {len(trans_filtered)} out of {len(self.transactions_df)} total transactions")
         else:
             st.warning("⚠️ 'Installment number' column not found, using all transactions")
             trans_filtered = self.transactions_df.copy()
@@ -325,6 +332,19 @@ class ReportGenerator:
         for col in final_columns:
             if col not in final_report.columns:
                 final_report[col] = np.nan
+        
+        # Show match statistics
+        matched_count = final_report['Customer Payment'].notna().sum()
+        if len(final_report) > 0:
+            st.info(f"📊 Match Results: {matched_count} out of {len(final_report)} records matched with transactions ({matched_count/len(final_report)*100:.1f}%)")
+        
+        # Show category distribution
+        category_counts = final_report['Category'].value_counts()
+        st.info(f"📊 Category Distribution: {dict(category_counts)}")
+        
+        # Show branch distribution
+        branch_counts = final_report['Branch'].value_counts().head(10)
+        st.info(f"📊 Top 10 Branches: {dict(branch_counts)}")
         
         return final_report[final_columns]
     
@@ -493,34 +513,6 @@ class ReportGenerator:
         
         return emp_performance
 
-def export_to_excel_safe(reports_dict, filename):
-    """
-    Safely export reports to Excel, trying different engines
-    """
-    try:
-        # Try with openpyxl first
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            for sheet_name, df in reports_dict.items():
-                if df is not None and len(df) > 0:
-                    df.to_excel(writer, sheet_name=sheet_name[:31], index=False)  # Excel sheet name max 31 chars
-        return buffer.getvalue()
-    except ImportError:
-        try:
-            # Try with xlsxwriter as fallback
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                for sheet_name, df in reports_dict.items():
-                    if df is not None and len(df) > 0:
-                        df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
-            return buffer.getvalue()
-        except ImportError:
-            st.warning("⚠️ Excel export not available. Please install openpyxl or xlsxwriter: pip install openpyxl")
-            return None
-    except Exception as e:
-        st.error(f"Error creating Excel file: {str(e)}")
-        return None
-
 def main():
     st.set_page_config(page_title="Report Generator System", layout="wide")
     
@@ -556,22 +548,22 @@ def main():
         border-left: 5px solid #3B82F6;
         margin: 1rem 0;
     }
+    .report-card {
+        background-color: #F3F4F6;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 0.5rem 0;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    .report-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
     </style>
     """, unsafe_allow_html=True)
     
     st.markdown('<div class="main-header"><h1>📊 Automated Report Generator</h1><p>Generate consolidated reports from Employees, Referrals, and Transactions data</p></div>', unsafe_allow_html=True)
-    
-    # Check and notify about Excel support
-    try:
-        import openpyxl
-        excel_supported = True
-    except ImportError:
-        try:
-            import xlsxwriter
-            excel_supported = True
-        except ImportError:
-            excel_supported = False
-            st.info("📌 **Note:** For Excel export, install openpyxl: `pip install openpyxl`")
     
     # File upload section
     col1, col2, col3 = st.columns(3)
@@ -726,8 +718,7 @@ def main():
                     # Visualization
                     st.subheader("📊 Top Schemes by Branch")
                     top_schemes = branch_scheme_report.groupby('Scheme Name')['Number of Customers'].sum().sort_values(ascending=False).head(10)
-                    if len(top_schemes) > 0:
-                        st.bar_chart(top_schemes)
+                    st.bar_chart(top_schemes)
                 else:
                     st.info("No scheme data available for branch-wise analysis")
             
@@ -786,8 +777,7 @@ def main():
                         'Number of Customers': 'sum',
                         'Total Enrollment Amount': 'sum'
                     }).sort_values('Number of Customers', ascending=False).head(10)
-                    if len(top_employees) > 0:
-                        st.dataframe(top_employees, use_container_width=True)
+                    st.dataframe(top_employees, use_container_width=True)
                 else:
                     st.info("No scheme data available for employee-wise analysis")
             
@@ -817,13 +807,11 @@ def main():
                     with col1:
                         st.subheader("Top 10 Branches by Customers")
                         top_branches = branch_summary.head(10)
-                        if len(top_branches) > 0:
-                            st.bar_chart(top_branches.set_index('Branch')['Total Customers'])
+                        st.bar_chart(top_branches.set_index('Branch')['Total Customers'])
                     
                     with col2:
                         st.subheader("Top 10 Branches by Revenue")
-                        if len(top_branches) > 0:
-                            st.bar_chart(top_branches.set_index('Branch')['Total Enrollment Amount'])
+                        st.bar_chart(top_branches.set_index('Branch')['Total Enrollment Amount'])
                 else:
                     st.info("No branch summary data available")
             
@@ -870,8 +858,7 @@ def main():
                     # Top employees
                     st.subheader("🏆 Top 10 Employees by Customer Count")
                     top_employees = filtered_performance.head(10)
-                    if len(top_employees) > 0:
-                        st.dataframe(top_employees[['Employee Name', 'Branch', 'Total Customers', 'Total Enrollment Amount', 'Match Rate (%)']], use_container_width=True)
+                    st.dataframe(top_employees[['Employee Name', 'Branch', 'Total Customers', 'Total Enrollment Amount', 'Match Rate (%)']], use_container_width=True)
                 else:
                     st.info("No employee performance data available")
             
@@ -883,27 +870,38 @@ def main():
             
             with col1:
                 # Export all reports to Excel
-                reports_dict = {
-                    'Consolidated Report': final_report,
-                    'Branch-wise Scheme': generator.generate_branch_wise_scheme_report(final_report),
-                    'Branch-Employee Scheme': generator.generate_branch_employee_wise_scheme_report(final_report),
-                    'Branch Summary': generator.generate_branch_summary_report(final_report),
-                    'Employee Performance': generator.generate_employee_performance_report(final_report),
-                    'Unmatched Records': final_report[final_report['Customer Payment'].isna()]
-                }
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                    final_report.to_excel(writer, sheet_name='Consolidated Report', index=False)
+                    
+                    branch_scheme = generator.generate_branch_wise_scheme_report(final_report)
+                    if len(branch_scheme) > 0:
+                        branch_scheme.to_excel(writer, sheet_name='Branch-wise Scheme', index=False)
+                    
+                    emp_scheme = generator.generate_branch_employee_wise_scheme_report(final_report)
+                    if len(emp_scheme) > 0:
+                        emp_scheme.to_excel(writer, sheet_name='Branch-Employee Scheme', index=False)
+                    
+                    branch_summary = generator.generate_branch_summary_report(final_report)
+                    if len(branch_summary) > 0:
+                        branch_summary.to_excel(writer, sheet_name='Branch Summary', index=False)
+                    
+                    emp_performance = generator.generate_employee_performance_report(final_report)
+                    if len(emp_performance) > 0:
+                        emp_performance.to_excel(writer, sheet_name='Employee Performance', index=False)
+                    
+                    # Add unmatched records sheet
+                    unmatched = final_report[final_report['Customer Payment'].isna()]
+                    if len(unmatched) > 0:
+                        unmatched.to_excel(writer, sheet_name='Unmatched Records', index=False)
                 
-                excel_data = export_to_excel_safe(reports_dict, f"complete_reports_{timestamp}.xlsx")
-                
-                if excel_data:
-                    st.download_button(
-                        label="📥 Download All Reports (Excel)",
-                        data=excel_data,
-                        file_name=f"complete_reports_{timestamp}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-                else:
-                    st.warning("Excel export not available. Please install openpyxl: `pip install openpyxl`")
+                st.download_button(
+                    label="📥 Download All Reports (Excel)",
+                    data=excel_buffer.getvalue(),
+                    file_name=f"complete_reports_{timestamp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
             
             with col2:
                 # Export consolidated report only
