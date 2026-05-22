@@ -143,9 +143,6 @@ class ReportGenerator:
         if has_joined_date or has_registered_date:
             # Apply conditional date logic
             final_report['Updated Date'] = self.referrals_df.apply(self.get_updated_date, axis=1)
-            
-            # Show info about date selection
-            st.info("📅 Date Logic: Using 'Joined Date' for 'Scheme Joined' status and 'Registered Date' for 'Customer Register' status")
         else:
             st.error("❌ Either 'Joined Date' or 'Registered Date' column must exist in Referrals Report")
             return None
@@ -223,9 +220,6 @@ class ReportGenerator:
             final_report['Branch'] = final_report['Raw Branch'].apply(self.transform_branch)
             # Drop the temporary column
             final_report.drop('Raw Branch', axis=1, inplace=True)
-            
-            # Show branch transformation summary
-            st.success("✅ Branch transformation logic applied successfully (Proper Case)")
         else:
             st.warning("⚠️ 'Referral Code' or 'Branch' missing in Employees Report")
             final_report['Branch'] = "Bhima Jewellery - Customer"
@@ -251,7 +245,6 @@ class ReportGenerator:
             # Convert to numeric for comparison
             self.transactions_df['Installment number'] = pd.to_numeric(self.transactions_df['Installment number'], errors='coerce')
             trans_filtered = self.transactions_df[self.transactions_df['Installment number'] == 1].copy()
-            st.info(f"📊 Transactions with Installment number = 1: {len(trans_filtered)} out of {len(self.transactions_df)} total transactions")
         else:
             st.warning("⚠️ 'Installment number' column not found, using all transactions")
             trans_filtered = self.transactions_df.copy()
@@ -333,20 +326,200 @@ class ReportGenerator:
             if col not in final_report.columns:
                 final_report[col] = np.nan
         
-        # Show match statistics
-        matched_count = final_report['Customer Payment'].notna().sum()
-        if len(final_report) > 0:
-            st.info(f"📊 Match Results: {matched_count} out of {len(final_report)} records matched with transactions ({matched_count/len(final_report)*100:.1f}%)")
-        
-        # Show category distribution
-        category_counts = final_report['Category'].value_counts()
-        st.info(f"📊 Category Distribution: {dict(category_counts)}")
-        
-        # Show branch distribution
-        branch_counts = final_report['Branch'].value_counts().head(10)
-        st.info(f"📊 Top 10 Branches: {dict(branch_counts)}")
-        
         return final_report[final_columns]
+    
+    def generate_branch_wise_scheme_report(self, final_report):
+        """
+        Generate Branch-wise Scheme Consolidation Report
+        Shows scheme distribution and performance by branch
+        """
+        # Filter out records without scheme name
+        report_data = final_report[final_report['Scheme Name'].notna() & (final_report['Scheme Name'] != '')].copy()
+        
+        if len(report_data) == 0:
+            return pd.DataFrame()
+        
+        # Create branch-wise scheme consolidation
+        branch_scheme_report = report_data.groupby(['Branch', 'Scheme Name']).agg({
+            'Customer Name': 'count',
+            'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum',
+            'True/False': 'sum',
+            'Employee Name': 'nunique'  # Unique employees who sold this scheme
+        }).reset_index()
+        
+        branch_scheme_report.columns = [
+            'Branch', 'Scheme Name', 'Number of Customers', 
+            'Total Enrollment Amount', 'Total Payment Received', 
+            'Number of Matched Payments', 'Unique Employees'
+        ]
+        
+        # Calculate match rate and pending amount
+        branch_scheme_report['Match Rate (%)'] = (
+            branch_scheme_report['Number of Matched Payments'] / 
+            branch_scheme_report['Number of Customers'] * 100
+        ).round(2)
+        
+        branch_scheme_report['Pending Amount'] = (
+            branch_scheme_report['Total Enrollment Amount'] - 
+            branch_scheme_report['Total Payment Received']
+        )
+        
+        # Sort by branch and number of customers
+        branch_scheme_report = branch_scheme_report.sort_values(['Branch', 'Number of Customers'], ascending=[True, False])
+        
+        return branch_scheme_report
+    
+    def generate_branch_employee_wise_scheme_report(self, final_report):
+        """
+        Generate Branch and Employee-wise Scheme Report
+        Shows scheme performance by branch and individual employees
+        """
+        # Filter out records without scheme name
+        report_data = final_report[final_report['Scheme Name'].notna() & (final_report['Scheme Name'] != '')].copy()
+        
+        if len(report_data) == 0:
+            return pd.DataFrame()
+        
+        # Create branch-employee-scheme report
+        emp_scheme_report = report_data.groupby(['Branch', 'Employee Name', 'Employee Code', 'Scheme Name']).agg({
+            'Customer Name': 'count',
+            'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum',
+            'True/False': 'sum',
+            'Referral Code': 'nunique'  # Unique referrals made
+        }).reset_index()
+        
+        emp_scheme_report.columns = [
+            'Branch', 'Employee Name', 'Employee Code', 'Scheme Name',
+            'Number of Customers', 'Total Enrollment Amount', 'Total Payment Received',
+            'Number of Matched Payments', 'Unique Referrals'
+        ]
+        
+        # Calculate match rate and average per customer
+        emp_scheme_report['Match Rate (%)'] = (
+            emp_scheme_report['Number of Matched Payments'] / 
+            emp_scheme_report['Number of Customers'] * 100
+        ).round(2)
+        
+        emp_scheme_report['Average Enrollment Amount'] = (
+            emp_scheme_report['Total Enrollment Amount'] / 
+            emp_scheme_report['Number of Customers']
+        ).round(2)
+        
+        emp_scheme_report['Pending Amount'] = (
+            emp_scheme_report['Total Enrollment Amount'] - 
+            emp_scheme_report['Total Payment Received']
+        )
+        
+        # Sort by branch and number of customers
+        emp_scheme_report = emp_scheme_report.sort_values(
+            ['Branch', 'Employee Name', 'Number of Customers'], 
+            ascending=[True, True, False]
+        )
+        
+        return emp_scheme_report
+    
+    def generate_branch_summary_report(self, final_report):
+        """
+        Generate Branch-wise Summary Report (Overall performance by branch)
+        """
+        branch_summary = final_report.groupby('Branch').agg({
+            'Customer Name': 'count',
+            'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum',
+            'True/False': 'sum',
+            'Employee Name': 'nunique',
+            'Scheme Name': lambda x: x.notna().sum()  # Count schemes sold
+        }).reset_index()
+        
+        branch_summary.columns = [
+            'Branch', 'Total Customers', 'Total Enrollment Amount', 
+            'Total Payment Received', 'Matched Payments', 'Unique Employees', 'Schemes Sold'
+        ]
+        
+        # Calculate additional metrics
+        branch_summary['Match Rate (%)'] = (
+            branch_summary['Matched Payments'] / branch_summary['Total Customers'] * 100
+        ).round(2)
+        
+        branch_summary['Pending Amount'] = (
+            branch_summary['Total Enrollment Amount'] - branch_summary['Total Payment Received']
+        )
+        
+        branch_summary['Average Enrollment Amount'] = (
+            branch_summary['Total Enrollment Amount'] / branch_summary['Total Customers']
+        ).round(2)
+        
+        # Sort by total customers
+        branch_summary = branch_summary.sort_values('Total Customers', ascending=False)
+        
+        return branch_summary
+    
+    def generate_employee_performance_report(self, final_report):
+        """
+        Generate Employee Performance Report (Overall performance by employee)
+        """
+        emp_performance = final_report.groupby(['Employee Name', 'Employee Code', 'Branch', 'Category']).agg({
+            'Customer Name': 'count',
+            'Customer Enrollment Amount': 'sum',
+            'Customer Payment': 'sum',
+            'True/False': 'sum',
+            'Scheme Name': lambda x: x.notna().sum(),
+            'Referral Code': 'nunique'
+        }).reset_index()
+        
+        emp_performance.columns = [
+            'Employee Name', 'Employee Code', 'Branch', 'Category',
+            'Total Customers', 'Total Enrollment Amount', 'Total Payment Received',
+            'Matched Payments', 'Schemes Sold', 'Unique Referrals'
+        ]
+        
+        # Calculate metrics
+        emp_performance['Match Rate (%)'] = (
+            emp_performance['Matched Payments'] / emp_performance['Total Customers'] * 100
+        ).round(2)
+        
+        emp_performance['Average Enrollment Amount'] = (
+            emp_performance['Total Enrollment Amount'] / emp_performance['Total Customers']
+        ).round(2)
+        
+        emp_performance['Pending Amount'] = (
+            emp_performance['Total Enrollment Amount'] - emp_performance['Total Payment Received']
+        )
+        
+        # Sort by total customers
+        emp_performance = emp_performance.sort_values('Total Customers', ascending=False)
+        
+        return emp_performance
+
+def export_to_excel_safe(reports_dict, filename):
+    """
+    Safely export reports to Excel, trying different engines
+    """
+    try:
+        # Try with openpyxl first
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            for sheet_name, df in reports_dict.items():
+                if df is not None and len(df) > 0:
+                    df.to_excel(writer, sheet_name=sheet_name[:31], index=False)  # Excel sheet name max 31 chars
+        return buffer.getvalue()
+    except ImportError:
+        try:
+            # Try with xlsxwriter as fallback
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                for sheet_name, df in reports_dict.items():
+                    if df is not None and len(df) > 0:
+                        df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+            return buffer.getvalue()
+        except ImportError:
+            st.warning("⚠️ Excel export not available. Please install openpyxl or xlsxwriter: pip install openpyxl")
+            return None
+    except Exception as e:
+        st.error(f"Error creating Excel file: {str(e)}")
+        return None
 
 def main():
     st.set_page_config(page_title="Report Generator System", layout="wide")
@@ -388,6 +561,18 @@ def main():
     
     st.markdown('<div class="main-header"><h1>📊 Automated Report Generator</h1><p>Generate consolidated reports from Employees, Referrals, and Transactions data</p></div>', unsafe_allow_html=True)
     
+    # Check and notify about Excel support
+    try:
+        import openpyxl
+        excel_supported = True
+    except ImportError:
+        try:
+            import xlsxwriter
+            excel_supported = True
+        except ImportError:
+            excel_supported = False
+            st.info("📌 **Note:** For Excel export, install openpyxl: `pip install openpyxl`")
+    
     # File upload section
     col1, col2, col3 = st.columns(3)
     
@@ -421,87 +606,6 @@ def main():
         if transactions_file:
             st.success("✅ Transactions file uploaded")
     
-    # Matching Logic Explanation
-    with st.expander("🔍 Understanding the Logic"):
-        st.markdown("""
-        ### Updated Date Logic:
-        
-        The **Updated Date** is selected based on the **Status** field:
-        
-        - **If Status contains "Scheme Joined" or "joined"** → Uses **Joined Date**
-        - **If Status contains "Customer Register" or "registered"** → Uses **Registered Date**
-        - **For any other status** → Defaults to **Joined Date** (if available), otherwise **Registered Date**
-        
-        ### Branch Transformation Logic (with Proper Case):
-        
-        The **Branch** field is transformed using the following rules:
-        
-        1. If branch is empty → "Bhima Jewellery - Customer"
-        2. If branch is "HEAD OFFICE" → "Bhima Jewellery - Madurai"
-        3. If branch is "IN-TRANSIT- LOCATIONS" → "Bhima Jewellery - Salem"
-        4. If branch is "APP SHOWROOM LOCATION" → "Bhima Jewellery - Tirunelveli"
-        5. If branch already contains "Bhima Jewellery -" → Keep as is (with proper case)
-        6. If branch ends with "BRANCH" → Remove "BRANCH" and add prefix (with proper case)
-        7. Otherwise → Add "Bhima Jewellery - " prefix (with proper case)
-        8. Finally, replace "Tiruchirappalli" with "Trichy" and ensure proper case
-        
-        **Proper Case Examples:**
-        - "salem branch" → "Bhima Jewellery - Salem"
-        - "chennai" → "Bhima Jewellery - Chennai"
-        - "TIRUNELVELI" → "Bhima Jewellery - Tirunelveli"
-        
-        ### How Customer Payment, Scheme Name, and Passbook Number are matched:
-        
-        The system looks for a transaction that matches **ALL THREE conditions**:
-        
-        1. **Customer Phone Number** matches between Referrals and Transactions
-        2. **Paid Date** matches the Updated Date (selected based on Status)
-        3. **Installment number** must be exactly 1 (first installment)
-        
-        ### Category Field Logic:
-        
-        - **Category** is taken from `Employee Type` in the Employees Report based on matching `Referral Code`
-        - If no match is found or the value is blank, it defaults to **"Customer"**
-        """)
-    
-    # Column requirements help
-    with st.expander("📋 View Required Column Names"):
-        col_req1, col_req2, col_req3 = st.columns(3)
-        
-        with col_req1:
-            st.markdown("**Employees Report**")
-            st.markdown("""
-            - `Referral Code`\n
-            - `Employee Code`\n
-            - `Branch` (Will be transformed to proper case)\n
-            - `Employee Type` (Optional - defaults to "Customer")
-            """)
-        
-        with col_req2:
-            st.markdown("**Referrals Report**")
-            st.markdown("""
-            - `Status`\n
-            - `Joined Date` (Used for "Scheme Joined" status)\n
-            - `Registered Date` (Used for "Customer Register" status)\n
-            - `Referee Name`\n
-            - `Referee Phone`\n
-            - `Enrollment Amount`\n
-            - `Referrer Name`\n
-            - `Referral Code`\n
-            - `Referrer Phone`
-            """)
-        
-        with col_req3:
-            st.markdown("**Transactions Report**")
-            st.markdown("""
-            - `Customer Phone Number`\n
-            - `Saved Amount`\n
-            - `Installment number` (must be 1 for matching)\n
-            - `Paid Date`\n
-            - `Scheme Name`\n
-            - `Passbook number`
-            """)
-    
     # Process files when all are uploaded
     if employees_file and referrals_file and transactions_file:
         try:
@@ -533,59 +637,6 @@ def main():
                 st.error("❌ Referrals Report must contain either 'Joined Date' or 'Registered Date' column")
                 st.stop()
             
-            # Validate other required columns
-            required_emp = ['Referral Code', 'Employee Code', 'Branch']
-            required_ref = ['Referee Name', 'Referee Phone', 'Enrollment Amount', 
-                           'Status', 'Referrer Name', 'Referral Code', 'Referrer Phone']
-            required_trans = ['Customer Phone Number', 'Saved Amount', 'Installment number', 'Paid Date']
-            
-            missing_cols = []
-            
-            for col in required_emp:
-                if col not in employees_df.columns:
-                    missing_cols.append(f"Employees: {col}")
-            
-            for col in required_ref:
-                if col not in referrals_df.columns:
-                    missing_cols.append(f"Referrals: {col}")
-            
-            for col in required_trans:
-                if col not in transactions_df.columns:
-                    missing_cols.append(f"Transactions: {col}")
-            
-            if missing_cols:
-                st.markdown('<div class="warning-box">⚠️ Missing Required Columns:</div>', unsafe_allow_html=True)
-                for col in missing_cols:
-                    st.write(f"- {col}")
-                st.stop()
-            
-            # Check if Employee Type exists, if not, add default
-            if 'Employee Type' not in employees_df.columns:
-                st.warning("⚠️ 'Employee Type' column not found in Employees Report. All categories will be set to 'Customer'")
-                employees_df['Employee Type'] = 'Customer'
-            
-            # Display data preview
-            with st.expander("📊 View Uploaded Data Preview"):
-                tab1, tab2, tab3 = st.tabs(["Employees Data", "Referrals Data", "Transactions Data"])
-                with tab1:
-                    st.dataframe(employees_df.head(10), use_container_width=True)
-                    st.caption(f"Total Records: {len(employees_df)}")
-                    
-                    # Show unique branch values before transformation
-                    if 'Branch' in employees_df.columns:
-                        st.write("Sample original branch names:")
-                        st.dataframe(employees_df['Branch'].dropna().unique()[:10])
-                with tab2:
-                    st.dataframe(referrals_df.head(10), use_container_width=True)
-                    st.caption(f"Total Records: {len(referrals_df)}")
-                    # Show status distribution
-                    if 'Status' in referrals_df.columns:
-                        st.write("Status Distribution:")
-                        st.dataframe(referrals_df['Status'].value_counts())
-                with tab3:
-                    st.dataframe(transactions_df.head(10), use_container_width=True)
-                    st.caption(f"Total Records: {len(transactions_df)}")
-            
             # Generate report
             with st.spinner("Generating consolidated report..."):
                 generator = ReportGenerator(employees_df, referrals_df, transactions_df)
@@ -598,170 +649,287 @@ def main():
             # Display success message
             st.markdown('<div class="success-box">✅ Report generated successfully!</div>', unsafe_allow_html=True)
             
-            # Display final report
-            st.subheader("📈 Final Consolidated Report")
-            st.dataframe(final_report, use_container_width=True, height=400)
+            # Create tabs for different reports
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                "📋 Consolidated Report", 
+                "🏢 Branch-wise Scheme Report", 
+                "👥 Branch & Employee Scheme Report",
+                "📊 Branch Summary",
+                "⭐ Employee Performance"
+            ])
             
-            # Statistics
-            st.subheader("📊 Report Statistics")
-            col1, col2, col3, col4, col5 = st.columns(5)
-            
-            with col1:
-                st.metric("Total Records", len(final_report))
-            
-            with col2:
-                total_amount = final_report['Customer Enrollment Amount'].sum()
-                st.metric("Total Enrollment Amount", f"₹{total_amount:,.2f}" if pd.notna(total_amount) else "₹0")
-            
-            with col3:
-                total_payment = final_report['Customer Payment'].sum()
-                st.metric("Total Payments", f"₹{total_payment:,.2f}" if pd.notna(total_payment) else "₹0")
-            
-            with col4:
-                matched = final_report['True/False'].sum() if 'True/False' in final_report.columns else 0
-                st.metric("Matched Records", int(matched))
-            
-            with col5:
-                match_percent = (matched / len(final_report) * 100) if len(final_report) > 0 else 0
-                st.metric("Match Rate", f"{match_percent:.1f}%")
-            
-            # Show sample of matched vs unmatched
-            st.subheader("📋 Sample Records")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**✅ Matched Records (First 5)**")
-                matched_records = final_report[final_report['Customer Payment'].notna()].head(5)
-                if len(matched_records) > 0:
-                    st.dataframe(matched_records[['Customer Name', 'Customer Phone', 'Updated Date', 'Status', 'Customer Enrollment Amount', 'Customer Payment', 'Branch']])
-                else:
-                    st.info("No matched records found")
-            
-            with col2:
-                st.markdown("**❌ Unmatched Records (First 5)**")
-                unmatched_records = final_report[final_report['Customer Payment'].isna()].head(5)
-                if len(unmatched_records) > 0:
-                    st.dataframe(unmatched_records[['Customer Name', 'Customer Phone', 'Updated Date', 'Status', 'Customer Enrollment Amount', 'Branch']])
-                else:
-                    st.info("No unmatched records found")
-            
-            # Category distribution
-            if 'Category' in final_report.columns:
-                st.subheader("📊 Category Distribution")
-                category_dist = final_report['Category'].value_counts()
-                st.bar_chart(category_dist)
+            with tab1:
+                st.subheader("📈 Final Consolidated Report")
+                st.dataframe(final_report, use_container_width=True, height=400)
                 
-                # Show category details
-                st.write("Category Breakdown:")
-                for category, count in category_dist.items():
-                    st.write(f"- **{category}**: {count} records ({count/len(final_report)*100:.1f}%)")
+                # Statistics
+                st.subheader("📊 Report Statistics")
+                col1, col2, col3, col4, col5 = st.columns(5)
+                
+                with col1:
+                    st.metric("Total Records", len(final_report))
+                
+                with col2:
+                    total_amount = final_report['Customer Enrollment Amount'].sum()
+                    st.metric("Total Enrollment Amount", f"₹{total_amount:,.2f}" if pd.notna(total_amount) else "₹0")
+                
+                with col3:
+                    total_payment = final_report['Customer Payment'].sum()
+                    st.metric("Total Payments", f"₹{total_payment:,.2f}" if pd.notna(total_payment) else "₹0")
+                
+                with col4:
+                    matched = final_report['True/False'].sum() if 'True/False' in final_report.columns else 0
+                    st.metric("Matched Records", int(matched))
+                
+                with col5:
+                    match_percent = (matched / len(final_report) * 100) if len(final_report) > 0 else 0
+                    st.metric("Match Rate", f"{match_percent:.1f}%")
             
-            # Branch distribution
-            st.subheader("🏢 Branch Distribution (Top 10)")
-            branch_dist = final_report['Branch'].value_counts().head(10)
-            st.bar_chart(branch_dist)
-            st.write("Top Branches:")
-            for branch, count in branch_dist.items():
-                st.write(f"- **{branch}**: {count} records ({count/len(final_report)*100:.1f}%)")
+            with tab2:
+                st.subheader("🏢 Branch-wise Scheme Consolidation Report")
+                st.markdown("Shows scheme distribution and performance metrics by branch")
+                
+                branch_scheme_report = generator.generate_branch_wise_scheme_report(final_report)
+                
+                if len(branch_scheme_report) > 0:
+                    # Add filters
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        branches = ['All'] + sorted(branch_scheme_report['Branch'].unique().tolist())
+                        selected_branch = st.selectbox("Filter by Branch", branches, key="branch_scheme_filter")
+                    
+                    with col2:
+                        schemes = ['All'] + sorted(branch_scheme_report['Scheme Name'].unique().tolist())
+                        selected_scheme = st.selectbox("Filter by Scheme", schemes, key="scheme_filter")
+                    
+                    # Apply filters
+                    filtered_report = branch_scheme_report.copy()
+                    if selected_branch != 'All':
+                        filtered_report = filtered_report[filtered_report['Branch'] == selected_branch]
+                    if selected_scheme != 'All':
+                        filtered_report = filtered_report[filtered_report['Scheme Name'] == selected_scheme]
+                    
+                    # Display metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Schemes", filtered_report['Scheme Name'].nunique())
+                    with col2:
+                        st.metric("Total Customers", filtered_report['Number of Customers'].sum())
+                    with col3:
+                        st.metric("Total Revenue", f"₹{filtered_report['Total Enrollment Amount'].sum():,.2f}")
+                    with col4:
+                        st.metric("Avg Match Rate", f"{filtered_report['Match Rate (%)'].mean():.1f}%")
+                    
+                    # Display the report
+                    st.dataframe(filtered_report, use_container_width=True)
+                    
+                    # Visualization
+                    st.subheader("📊 Top Schemes by Branch")
+                    top_schemes = branch_scheme_report.groupby('Scheme Name')['Number of Customers'].sum().sort_values(ascending=False).head(10)
+                    if len(top_schemes) > 0:
+                        st.bar_chart(top_schemes)
+                else:
+                    st.info("No scheme data available for branch-wise analysis")
             
-            # Monthly summary
-            st.subheader("📅 Monthly Summary")
-            monthly_summary = final_report.groupby('Month').agg({
-                'Customer Name': 'count',
-                'Customer Enrollment Amount': 'sum',
-                'True/False': 'sum'
-            }).rename(columns={
-                'Customer Name': 'Number of Customers',
-                'Customer Enrollment Amount': 'Total Amount',
-                'True/False': 'Matched Payments'
-            })
-            st.dataframe(monthly_summary, use_container_width=True)
+            with tab3:
+                st.subheader("👥 Branch & Employee-wise Scheme Report")
+                st.markdown("Shows scheme performance by branch and individual employees")
+                
+                emp_scheme_report = generator.generate_branch_employee_wise_scheme_report(final_report)
+                
+                if len(emp_scheme_report) > 0:
+                    # Add filters
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        branches = ['All'] + sorted(emp_scheme_report['Branch'].unique().tolist())
+                        selected_branch = st.selectbox("Filter by Branch", branches, key="emp_branch_filter")
+                    
+                    with col2:
+                        if selected_branch != 'All':
+                            employees = ['All'] + sorted(emp_scheme_report[emp_scheme_report['Branch'] == selected_branch]['Employee Name'].unique().tolist())
+                        else:
+                            employees = ['All'] + sorted(emp_scheme_report['Employee Name'].unique().tolist())
+                        selected_employee = st.selectbox("Filter by Employee", employees, key="emp_filter")
+                    
+                    with col3:
+                        schemes = ['All'] + sorted(emp_scheme_report['Scheme Name'].unique().tolist())
+                        selected_scheme = st.selectbox("Filter by Scheme", schemes, key="emp_scheme_filter")
+                    
+                    # Apply filters
+                    filtered_report = emp_scheme_report.copy()
+                    if selected_branch != 'All':
+                        filtered_report = filtered_report[filtered_report['Branch'] == selected_branch]
+                    if selected_employee != 'All':
+                        filtered_report = filtered_report[filtered_report['Employee Name'] == selected_employee]
+                    if selected_scheme != 'All':
+                        filtered_report = filtered_report[filtered_report['Scheme Name'] == selected_scheme]
+                    
+                    # Display metrics
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("Total Employees", filtered_report['Employee Name'].nunique())
+                    with col2:
+                        st.metric("Total Schemes", filtered_report['Scheme Name'].nunique())
+                    with col3:
+                        st.metric("Total Customers", filtered_report['Number of Customers'].sum())
+                    with col4:
+                        st.metric("Total Revenue", f"₹{filtered_report['Total Enrollment Amount'].sum():,.2f}")
+                    with col5:
+                        st.metric("Avg Match Rate", f"{filtered_report['Match Rate (%)'].mean():.1f}%")
+                    
+                    # Display the report
+                    st.dataframe(filtered_report, use_container_width=True)
+                    
+                    # Top performing employees
+                    st.subheader("🏆 Top Performing Employees by Customer Count")
+                    top_employees = emp_scheme_report.groupby('Employee Name').agg({
+                        'Number of Customers': 'sum',
+                        'Total Enrollment Amount': 'sum'
+                    }).sort_values('Number of Customers', ascending=False).head(10)
+                    if len(top_employees) > 0:
+                        st.dataframe(top_employees, use_container_width=True)
+                else:
+                    st.info("No scheme data available for employee-wise analysis")
+            
+            with tab4:
+                st.subheader("📊 Branch Summary Report")
+                st.markdown("Overall performance summary by branch")
+                
+                branch_summary = generator.generate_branch_summary_report(final_report)
+                
+                if len(branch_summary) > 0:
+                    # Display metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Branches", len(branch_summary))
+                    with col2:
+                        st.metric("Total Customers", branch_summary['Total Customers'].sum())
+                    with col3:
+                        st.metric("Total Revenue", f"₹{branch_summary['Total Enrollment Amount'].sum():,.2f}")
+                    with col4:
+                        st.metric("Overall Match Rate", f"{branch_summary['Match Rate (%)'].mean():.1f}%")
+                    
+                    # Display the report
+                    st.dataframe(branch_summary, use_container_width=True)
+                    
+                    # Visualization
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.subheader("Top 10 Branches by Customers")
+                        top_branches = branch_summary.head(10)
+                        if len(top_branches) > 0:
+                            st.bar_chart(top_branches.set_index('Branch')['Total Customers'])
+                    
+                    with col2:
+                        st.subheader("Top 10 Branches by Revenue")
+                        if len(top_branches) > 0:
+                            st.bar_chart(top_branches.set_index('Branch')['Total Enrollment Amount'])
+                else:
+                    st.info("No branch summary data available")
+            
+            with tab5:
+                st.subheader("⭐ Employee Performance Report")
+                st.markdown("Overall performance metrics by employee")
+                
+                emp_performance = generator.generate_employee_performance_report(final_report)
+                
+                if len(emp_performance) > 0:
+                    # Add filters
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        categories = ['All'] + sorted(emp_performance['Category'].unique().tolist())
+                        selected_category = st.selectbox("Filter by Category", categories)
+                    
+                    with col2:
+                        branches = ['All'] + sorted(emp_performance['Branch'].unique().tolist())
+                        selected_branch = st.selectbox("Filter by Branch", branches, key="perf_branch_filter")
+                    
+                    # Apply filters
+                    filtered_performance = emp_performance.copy()
+                    if selected_category != 'All':
+                        filtered_performance = filtered_performance[filtered_performance['Category'] == selected_category]
+                    if selected_branch != 'All':
+                        filtered_performance = filtered_performance[filtered_performance['Branch'] == selected_branch]
+                    
+                    # Display metrics
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.metric("Total Employees", len(filtered_performance))
+                    with col2:
+                        st.metric("Total Customers", filtered_performance['Total Customers'].sum())
+                    with col3:
+                        st.metric("Total Revenue", f"₹{filtered_performance['Total Enrollment Amount'].sum():,.2f}")
+                    with col4:
+                        st.metric("Average per Employee", f"₹{(filtered_performance['Total Enrollment Amount'].sum() / len(filtered_performance)):,.0f}" if len(filtered_performance) > 0 else "₹0")
+                    with col5:
+                        st.metric("Overall Match Rate", f"{filtered_performance['Match Rate (%)'].mean():.1f}%")
+                    
+                    # Display the report
+                    st.dataframe(filtered_performance, use_container_width=True)
+                    
+                    # Top employees
+                    st.subheader("🏆 Top 10 Employees by Customer Count")
+                    top_employees = filtered_performance.head(10)
+                    if len(top_employees) > 0:
+                        st.dataframe(top_employees[['Employee Name', 'Branch', 'Total Customers', 'Total Enrollment Amount', 'Match Rate (%)']], use_container_width=True)
+                else:
+                    st.info("No employee performance data available")
             
             # Export options
-            st.subheader("💾 Export Report")
+            st.subheader("💾 Export All Reports")
             
             col1, col2, col3 = st.columns(3)
-            
-            # Get current timestamp for filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             with col1:
-                # Export to CSV
+                # Export all reports to Excel
+                reports_dict = {
+                    'Consolidated Report': final_report,
+                    'Branch-wise Scheme': generator.generate_branch_wise_scheme_report(final_report),
+                    'Branch-Employee Scheme': generator.generate_branch_employee_wise_scheme_report(final_report),
+                    'Branch Summary': generator.generate_branch_summary_report(final_report),
+                    'Employee Performance': generator.generate_employee_performance_report(final_report),
+                    'Unmatched Records': final_report[final_report['Customer Payment'].isna()]
+                }
+                
+                excel_data = export_to_excel_safe(reports_dict, f"complete_reports_{timestamp}.xlsx")
+                
+                if excel_data:
+                    st.download_button(
+                        label="📥 Download All Reports (Excel)",
+                        data=excel_data,
+                        file_name=f"complete_reports_{timestamp}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("Excel export not available. Please install openpyxl: `pip install openpyxl`")
+            
+            with col2:
+                # Export consolidated report only
                 csv_buffer = io.StringIO()
                 final_report.to_csv(csv_buffer, index=False)
                 st.download_button(
-                    label="📥 Download as CSV",
+                    label="📥 Download Consolidated Report (CSV)",
                     data=csv_buffer.getvalue(),
                     file_name=f"consolidated_report_{timestamp}.csv",
                     mime="text/csv",
                     use_container_width=True
                 )
             
-            with col2:
-                # Export to Excel
-                excel_buffer = io.BytesIO()
-                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                    final_report.to_excel(writer, sheet_name='Consolidated Report', index=False)
-                    
-                    # Add unmatched records sheet
-                    unmatched = final_report[final_report['Customer Payment'].isna()]
-                    if len(unmatched) > 0:
-                        unmatched.to_excel(writer, sheet_name='Unmatched Records', index=False)
-                    
-                    # Add summary sheet
-                    if not monthly_summary.empty:
-                        monthly_summary.to_excel(writer, sheet_name='Monthly Summary')
-                    
-                    # Add category distribution
-                    if 'Category' in final_report.columns:
-                        category_df = final_report['Category'].value_counts().reset_index()
-                        category_df.columns = ['Category', 'Count']
-                        category_df.to_excel(writer, sheet_name='Category Distribution', index=False)
-                    
-                    # Add branch distribution
-                    branch_df = final_report['Branch'].value_counts().reset_index()
-                    branch_df.columns = ['Branch', 'Count']
-                    branch_df.to_excel(writer, sheet_name='Branch Distribution', index=False)
-                    
-                    # Add date selection summary
-                    if 'Status' in referrals_df.columns:
-                        status_summary = referrals_df.groupby('Status').size().reset_index()
-                        status_summary.columns = ['Status', 'Count']
-                        status_summary.to_excel(writer, sheet_name='Status Summary', index=False)
-                    
-                    # Add statistics sheet
-                    stats_data = {
-                        'Metric': ['Total Records', 'Total Enrollment Amount', 'Total Payments', 'Matched Records', 'Match Rate'],
-                        'Value': [
-                            len(final_report),
-                            f"₹{final_report['Customer Enrollment Amount'].sum():,.2f}",
-                            f"₹{final_report['Customer Payment'].sum():,.2f}",
-                            int(matched),
-                            f"{match_percent:.1f}%"
-                        ]
-                    }
-                    stats_df = pd.DataFrame(stats_data)
-                    stats_df.to_excel(writer, sheet_name='Statistics', index=False)
-                
-                st.download_button(
-                    label="📥 Download as Excel",
-                    data=excel_buffer.getvalue(),
-                    file_name=f"consolidated_report_{timestamp}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
-            
             with col3:
-                # Download as JSON
-                json_buffer = io.StringIO()
-                final_report.to_json(json_buffer, orient='records', date_format='iso')
-                st.download_button(
-                    label="📥 Download as JSON",
-                    data=json_buffer.getvalue(),
-                    file_name=f"consolidated_report_{timestamp}.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
+                # Export branch summary
+                branch_summary = generator.generate_branch_summary_report(final_report)
+                if len(branch_summary) > 0:
+                    csv_buffer = io.StringIO()
+                    branch_summary.to_csv(csv_buffer, index=False)
+                    st.download_button(
+                        label="📥 Download Branch Summary (CSV)",
+                        data=csv_buffer.getvalue(),
+                        file_name=f"branch_summary_{timestamp}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
             
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
