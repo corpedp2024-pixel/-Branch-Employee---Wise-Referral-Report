@@ -6,10 +6,11 @@ import io
 import re
 
 class ReportGenerator:
-    def __init__(self, employees_df, referrals_df, transactions_df):
+    def __init__(self, employees_df, referrals_df, transactions_df, bss_df=None):
         self.employees_df = employees_df
         self.referrals_df = referrals_df
         self.transactions_df = transactions_df
+        self.bss_df = bss_df
         
     def clean_phone_number(self, phone):
         """Clean phone number for matching"""
@@ -128,6 +129,175 @@ class ReportGenerator:
             final_branch = final_branch.title()
         
         return final_branch
+    
+    def match_with_bss_report(self, final_report):
+        """
+        Match remaining joined schemes with BSS Report
+        Conditions:
+        - Referral report Referee Phone + BSS Report Mobileno
+        - Referral report Joined Date + BSS Report Date
+        - Referral report Enrollment Amount + BSS Report Online
+        """
+        if self.bss_df is None or len(self.bss_df) == 0:
+            st.warning("⚠️ BSS Report not provided. Some scheme details may remain unmatched.")
+            return final_report
+        
+        st.info("🔍 Attempting to match remaining records with BSS Report...")
+        
+        # Prepare BSS data for matching
+        bss_clean = self.bss_df.copy()
+        
+        # Check required columns in BSS report
+        required_bss_cols = {
+            'Mobileno': 'Customer Phone',
+            'Date': 'Date',
+            'Online': 'Online Amount',
+            'Scheme': 'Scheme Name',
+            'Doc No': 'Passbook Number'
+        }
+        
+        missing_cols = []
+        for bss_col in required_bss_cols.keys():
+            if bss_col not in bss_clean.columns:
+                missing_cols.append(bss_col)
+        
+        if missing_cols:
+            st.warning(f"⚠️ BSS Report missing columns: {', '.join(missing_cols)}. Some columns may not be available for matching.")
+        
+        # Clean phone numbers in BSS
+        if 'Mobileno' in bss_clean.columns:
+            bss_clean['Clean Phone'] = bss_clean['Mobileno'].apply(self.clean_phone_number)
+        else:
+            st.error("❌ 'Mobileno' column not found in BSS Report")
+            return final_report
+        
+        # Parse dates in BSS
+        if 'Date' in bss_clean.columns:
+            bss_clean['Clean Date'] = bss_clean['Date'].apply(self.parse_date_flexible)
+        else:
+            st.warning("⚠️ 'Date' column not found in BSS Report, using date matching without date validation")
+            bss_clean['Clean Date'] = None
+        
+        # Convert Online amount to numeric
+        if 'Online' in bss_clean.columns:
+            bss_clean['Online Amount'] = pd.to_numeric(bss_clean['Online'], errors='coerce')
+        else:
+            st.warning("⚠️ 'Online' column not found in BSS Report, amount matching will be skipped")
+            bss_clean['Online Amount'] = np.nan
+        
+        # Create BSS lookup dictionary with composite key
+        bss_lookup = {}
+        for idx, row in bss_clean.iterrows():
+            phone = row['Clean Phone']
+            date = row['Clean Date']
+            amount = row['Online Amount']
+            
+            if phone and phone != "":
+                # Create key with phone only (more flexible)
+                key = phone
+                if date:
+                    # If date is available, add to key for more precise matching
+                    key = f"{phone}_{date}"
+                
+                # Store BSS record
+                if key not in bss_lookup:
+                    bss_lookup[key] = []
+                
+                bss_lookup[key].append({
+                    'amount': amount,
+                    'scheme_name': row.get('Scheme', ''),
+                    'doc_no': row.get('Doc No', ''),
+                    'date': date
+                })
+        
+        # Find records that need BSS matching (joined schemes with empty payment/scheme name)
+        # These are records that are not enrolled (Not Enrolled = True) but have status containing 'joined'
+        need_bss_matching = final_report[
+            (final_report['Not Enrolled'] == True) & 
+            (final_report['Status'].str.lower().str.contains('joined', na=False))
+        ].copy()
+        
+        st.info(f"📊 Found {len(need_bss_matching)} records that need BSS Report matching")
+        
+        if len(need_bss_matching) == 0:
+            st.success("✅ No records need BSS matching")
+            return final_report
+        
+        # Attempt to match each record with BSS
+        matched_count = 0
+        for idx in need_bss_matching.index:
+            row = final_report.loc[idx]
+            customer_phone = row['Customer Phone']
+            updated_date = row['Updated Date']
+            enrollment_amount = row['Customer Enrollment Amount']
+            
+            if not customer_phone or customer_phone == "":
+                continue
+            
+            # Try to find match in BSS
+            # First try with phone + date
+            if pd.notna(updated_date):
+                exact_key = f"{customer_phone}_{updated_date}"
+                if exact_key in bss_lookup:
+                    for match in bss_lookup[exact_key]:
+                        # Check amount match if available
+                        if pd.notna(enrollment_amount) and pd.notna(match['amount']):
+                            if abs(match['amount'] - enrollment_amount) <= 1:  # Allow 1 rupee difference
+                                # Match found
+                                final_report.loc[idx, 'Customer Payment'] = match['amount']
+                                final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
+                                final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
+                                final_report.loc[idx, 'True/False'] = True
+                                final_report.loc[idx, 'Not Enrolled'] = False
+                                matched_count += 1
+                                break
+                        else:
+                            # If amount not available for matching, still match if phone and date match
+                            final_report.loc[idx, 'Customer Payment'] = match['amount'] if pd.notna(match['amount']) else enrollment_amount
+                            final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
+                            final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
+                            final_report.loc[idx, 'True/False'] = True
+                            final_report.loc[idx, 'Not Enrolled'] = False
+                            matched_count += 1
+                            break
+            
+            # If no match with date, try with phone only
+            if final_report.loc[idx, 'Not Enrolled'] == True:  # Still not matched
+                phone_key = customer_phone
+                if phone_key in bss_lookup:
+                    for match in bss_lookup[phone_key]:
+                        # Check amount match
+                        if pd.notna(enrollment_amount) and pd.notna(match['amount']):
+                            if abs(match['amount'] - enrollment_amount) <= 1:
+                                final_report.loc[idx, 'Customer Payment'] = match['amount']
+                                final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
+                                final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
+                                final_report.loc[idx, 'True/False'] = True
+                                final_report.loc[idx, 'Not Enrolled'] = False
+                                matched_count += 1
+                                break
+                        else:
+                            # If amount not available, use first match
+                            final_report.loc[idx, 'Customer Payment'] = match['amount'] if pd.notna(match['amount']) else enrollment_amount
+                            final_report.loc[idx, 'Scheme Name'] = match['scheme_name']
+                            final_report.loc[idx, 'Scheme Passbook Number'] = match['doc_no']
+                            final_report.loc[idx, 'True/False'] = True
+                            final_report.loc[idx, 'Not Enrolled'] = False
+                            matched_count += 1
+                            break
+        
+        st.success(f"✅ Successfully matched {matched_count} records using BSS Report")
+        
+        # Show unmatched records count
+        still_unmatched = final_report[
+            (final_report['Not Enrolled'] == True) & 
+            (final_report['Status'].str.lower().str.contains('joined', na=False))
+        ].shape[0]
+        
+        if still_unmatched > 0:
+            st.warning(f"⚠️ {still_unmatched} joined scheme records remain unmatched even after BSS matching")
+        
+        return final_report
     
     def generate_report(self):
         """Generate the final consolidated report"""
@@ -315,8 +485,16 @@ class ReportGenerator:
             False
         )
         
+        # Clear Customer Payment, Scheme Name, and Scheme Passbook Number when True/False is False
+        final_report.loc[final_report['True/False'] == False, 'Customer Payment'] = np.nan
+        final_report.loc[final_report['True/False'] == False, 'Scheme Name'] = ''
+        final_report.loc[final_report['True/False'] == False, 'Scheme Passbook Number'] = ''
+        
         # Add Not Enrolled flag (customers without payment)
         final_report['Not Enrolled'] = final_report['Customer Payment'].isna()
+        
+        # Match with BSS Report for remaining joined schemes
+        final_report = self.match_with_bss_report(final_report)
         
         # 16. Month (extract month name from Updated Date)
         final_report['Month'] = final_report['Updated Date'].apply(
@@ -340,7 +518,7 @@ class ReportGenerator:
         matched_count = final_report['Customer Payment'].notna().sum()
         not_enrolled_count = final_report['Not Enrolled'].sum()
         if len(final_report) > 0:
-            st.info(f"📊 Match Results: {matched_count} out of {len(final_report)} records matched with transactions ({matched_count/len(final_report)*100:.1f}%)")
+            st.info(f"📊 Final Match Results: {matched_count} out of {len(final_report)} records matched ({matched_count/len(final_report)*100:.1f}%)")
             st.info(f"📊 Not Enrolled Customers: {not_enrolled_count} out of {len(final_report)} ({not_enrolled_count/len(final_report)*100:.1f}%)")
         
         # Show category distribution
@@ -669,10 +847,10 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    st.markdown('<div class="main-header"><h1>📊 Automated Report Generator</h1><p>Generate consolidated reports from Employees, Referrals, and Transactions data</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h1>📊 Automated Report Generator</h1><p>Generate consolidated reports from Employees, Referrals, Transactions, and BSS data</p></div>', unsafe_allow_html=True)
     
     # File upload section
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         employees_file = st.file_uploader(
@@ -704,7 +882,17 @@ def main():
         if transactions_file:
             st.success("✅ Transactions file uploaded")
     
-    # Process files when all are uploaded
+    with col4:
+        bss_file = st.file_uploader(
+            "📁 BSS Report (Optional)",
+            type=['xlsx', 'xls', 'csv'],
+            help="Upload BSS Excel or CSV file for additional matching (helps match joined schemes without payment)",
+            key="bss_file"
+        )
+        if bss_file:
+            st.success("✅ BSS file uploaded")
+    
+    # Process files when required files are uploaded
     if employees_file and referrals_file and transactions_file:
         try:
             # Load files
@@ -726,6 +914,15 @@ def main():
                     transactions_df = pd.read_csv(transactions_file)
                 else:
                     transactions_df = pd.read_excel(transactions_file)
+                
+                # Load BSS Report if provided
+                bss_df = None
+                if bss_file:
+                    if bss_file.name.endswith('.csv'):
+                        bss_df = pd.read_csv(bss_file)
+                    else:
+                        bss_df = pd.read_excel(bss_file)
+                    st.success(f"✅ BSS Report loaded with {len(bss_df)} records")
             
             # Check for required date columns in referrals
             has_joined_date = 'Joined Date' in referrals_df.columns
@@ -737,7 +934,7 @@ def main():
             
             # Generate report
             with st.spinner("Generating consolidated report..."):
-                generator = ReportGenerator(employees_df, referrals_df, transactions_df)
+                generator = ReportGenerator(employees_df, referrals_df, transactions_df, bss_df)
                 final_report = generator.generate_report()
                 
                 if final_report is None:
@@ -1093,6 +1290,15 @@ def main():
                     if len(not_enrolled) > 0:
                         not_enrolled.to_excel(writer, sheet_name='Not Enrolled Customers', index=False)
                     
+                    # Add BSS matched records sheet
+                    bss_matched = final_report[
+                        (final_report['Not Enrolled'] == False) & 
+                        (final_report['Customer Payment'].notna()) &
+                        (final_report['Status'].str.lower().str.contains('joined', na=False))
+                    ]
+                    if len(bss_matched) > 0:
+                        bss_matched.to_excel(writer, sheet_name='BSS Matched Records', index=False)
+                    
                     # Add unmatched records sheet
                     unmatched = final_report[final_report['Customer Payment'].isna()]
                     if len(unmatched) > 0:
@@ -1137,7 +1343,7 @@ def main():
             st.info("Please check that your files have the correct column names and data formats.")
     
     else:
-        st.info("👈 **Please upload all three files** (Employees, Referrals, and Transactions reports) to generate the consolidated report.")
+        st.info("👈 **Please upload all three required files** (Employees, Referrals, and Transactions reports) to generate the consolidated report. BSS Report is optional but recommended for better matching.")
 
 if __name__ == "__main__":
     main()
