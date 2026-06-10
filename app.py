@@ -1751,55 +1751,176 @@ def main():
                 if len(branch_df) > 0:
                     st.info(f"📊 **Schemes found:** {', '.join(schemes)}")
                     
-                    st.markdown("#### Branch-wise Summary")
-                    st.dataframe(branch_df, use_container_width=True)
+                    # Create a single branch filter that controls both sections
+                    st.markdown("#### 🔍 Filter by Branch (Applies to both sections below)")
                     
-                    # Individual download button for Branch Referral Summary
-                    csv_buffer = io.StringIO()
-                    branch_df.to_csv(csv_buffer, index=False)
-                    st.download_button(
-                        label="📥 Download Branch Referral Summary (CSV)",
-                        data=csv_buffer.getvalue(),
-                        file_name=f"branch_referral_summary_{timestamp}.csv",
-                        mime="text/csv",
-                        use_container_width=False
+                    all_branches = sorted(branch_df[branch_df['Branch'] != 'Grand Total']['Branch'].unique().tolist())
+                    
+                    # Add "Select All" option for branches
+                    branch_options = ['Select All'] + all_branches
+                    selected_branches = st.multiselect(
+                        "🏢 Select Branches",
+                        options=branch_options,
+                        default=['Select All'],
+                        key="branch_ref_filter_sync"
                     )
                     
-                    st.markdown("#### Employee-wise Details")
+                    # Handle "Select All" selection
+                    if 'Select All' in selected_branches:
+                        selected_branches = all_branches
                     
-                    if len(employee_df) > 0:
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            branches = ['All'] + sorted(employee_df['Branch'].unique().tolist())
-                            selected_branch = st.selectbox("🏢 Filter by Branch", branches, key="emp_ref_branch")
-                        
-                        with col2:
-                            if selected_branch != 'All':
-                                employees = ['All'] + sorted(employee_df[employee_df['Branch'] == selected_branch]['Employee Name'].unique().tolist())
-                            else:
-                                employees = ['All'] + sorted(employee_df['Employee Name'].unique().tolist())
-                            selected_employee = st.selectbox("👤 Filter by Employee", employees, key="emp_ref_emp")
-                        
-                        filtered_employee_df = employee_df.copy()
-                        if selected_branch != 'All':
-                            filtered_employee_df = filtered_employee_df[filtered_employee_df['Branch'] == selected_branch]
-                        if selected_employee != 'All':
-                            filtered_employee_df = filtered_employee_df[filtered_employee_df['Employee Name'] == selected_employee]
-                        
-                        st.dataframe(filtered_employee_df, use_container_width=True)
-                        
-                        # Individual download button for Employee Referral Details
-                        csv_buffer = io.StringIO()
-                        filtered_employee_df.to_csv(csv_buffer, index=False)
-                        st.download_button(
-                            label="📥 Download Employee Referral Details (CSV)",
-                            data=csv_buffer.getvalue(),
-                            file_name=f"employee_referral_details_{timestamp}.csv",
-                            mime="text/csv",
-                            use_container_width=False
-                        )
+                    # If no branches selected, show message
+                    if not selected_branches:
+                        st.warning("⚠️ Please select at least one branch to view data")
                     else:
-                        st.info("ℹ️ No employee data available")
+                        # Filter branch_df based on selected branches
+                        filtered_branch_df = branch_df[
+                            (branch_df['Branch'].isin(selected_branches)) | 
+                            (branch_df['Branch'] == 'Grand Total')
+                        ].copy()
+                        
+                        # Filter employee_df based on selected branches
+                        filtered_employee_df = employee_df[employee_df['Branch'].isin(selected_branches)].copy()
+                        
+                        st.markdown("#### Branch-wise Summary")
+                        st.dataframe(filtered_branch_df, use_container_width=True)
+                        
+                        st.markdown("#### Employee-wise Details")
+                        
+                        if len(filtered_employee_df) > 0:
+                            # Employee filter (independent, but only shows employees from selected branches)
+                            available_employees = sorted(filtered_employee_df['Employee Name'].unique().tolist())
+                            
+                            # Add "Select All" option for employees
+                            employee_options = ['Select All'] + available_employees
+                            selected_employee_names = st.multiselect(
+                                "👤 Filter by Employees (Optional - Multiple)",
+                                options=employee_options,
+                                default=[],
+                                key="emp_ref_emp_sync"
+                            )
+                            
+                            # Handle "Select All" selection
+                            if 'Select All' in selected_employee_names:
+                                selected_employee_names = [emp for emp in available_employees if emp != 'Select All']
+                            
+                            # Further filter by selected employees
+                            if selected_employee_names:
+                                filtered_employee_df = filtered_employee_df[filtered_employee_df['Employee Name'].isin(selected_employee_names)]
+                            
+                            # Display filtered employee data
+                            st.dataframe(filtered_employee_df, use_container_width=True)
+                            
+                            # Summary statistics for selected branches
+                            st.markdown("#### 📊 Summary for Selected Branches")
+                            col_a, col_b, col_c, col_d = st.columns(4)
+                            
+                            with col_a:
+                                total_employees = filtered_employee_df['Employee Name'].nunique()
+                                st.metric("Total Employees", total_employees)
+                            
+                            with col_b:
+                                total_enrolled = filtered_employee_df['Total Enrolled Count'].sum() if 'Total Enrolled Count' in filtered_employee_df.columns else 0
+                                st.metric("Total Enrolled", f"{int(total_enrolled):,}")
+                            
+                            with col_c:
+                                total_not_enrolled = filtered_employee_df['Not Enrolled Count'].sum() if 'Not Enrolled Count' in filtered_employee_df.columns else 0
+                                st.metric("Not Enrolled", f"{int(total_not_enrolled):,}")
+                            
+                            with col_d:
+                                # Calculate total amount (remove ₹ symbol and commas)
+                                total_amount = 0
+                                if 'Total Enrolled Amount' in filtered_employee_df.columns:
+                                    for val in filtered_employee_df['Total Enrolled Amount']:
+                                        if val != '-' and pd.notna(val):
+                                            try:
+                                                # Remove ₹ and commas
+                                                clean_val = str(val).replace('₹', '').replace(',', '')
+                                                total_amount += float(clean_val)
+                                            except:
+                                                pass
+                                st.metric("Total Amount", f"₹{total_amount:,.0f}")
+                            
+                            # SINGLE DOWNLOAD BUTTON FOR BOTH REPORTS
+                            st.markdown("---")
+                            st.markdown("#### 💾 Download Both Reports Together")
+                            
+                            # Create Excel file with both reports
+                            def create_branch_employee_excel(branch_df_data, employee_df_data):
+                                excel_buffer = io.BytesIO()
+                                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                                    # Write branch summary
+                                    branch_df_data.to_excel(writer, sheet_name='Branch-wise Summary', index=False)
+                                    
+                                    # Write employee details
+                                    employee_df_data.to_excel(writer, sheet_name='Employee-wise Details', index=False)
+                                    
+                                    # Add a summary sheet with filter info
+                                    summary_data = {
+                                        'Report Generated On': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+                                        'Date Filter Applied': [f"{filter_start_date} to {filter_end_date}" if filter_start_date and filter_end_date else "No Filter"],
+                                        'Selected Branches': [', '.join(selected_branches)],
+                                        'Total Schemes': [len(schemes)],
+                                        'Schemes List': [', '.join(schemes)]
+                                    }
+                                    summary_df = pd.DataFrame(summary_data)
+                                    summary_df.to_excel(writer, sheet_name='Report Info', index=False)
+                                
+                                return excel_buffer
+                            
+                            # Create the combined Excel file
+                            combined_excel = create_branch_employee_excel(filtered_branch_df, filtered_employee_df)
+                            
+                            # Create filename with timestamp
+                            timestamp_local = datetime.now().strftime('%Y%m%d_%H%M%S')
+                            if filter_start_date and filter_end_date:
+                                filename = f"branch_employee_referral_{filter_start_date}_to_{filter_end_date}_{timestamp_local}.xlsx"
+                            else:
+                                filename = f"branch_employee_referral_all_data_{timestamp_local}.xlsx"
+                            
+                            # Single download button
+                            col1, col2, col3 = st.columns([1, 2, 1])
+                            with col2:
+                                st.download_button(
+                                    label="📥 Download Both Reports (Excel)",
+                                    data=combined_excel.getvalue(),
+                                    file_name=filename,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    use_container_width=True,
+                                    help="Download Branch-wise Summary and Employee-wise Details in a single Excel file"
+                                )
+                            
+                            # Optional: Also provide individual CSV downloads if needed
+                            with st.expander("📎 Additional Download Options"):
+                                st.markdown("**Download individual reports as CSV:**")
+                                
+                                col_csv1, col_csv2 = st.columns(2)
+                                with col_csv1:
+                                    # Branch summary CSV
+                                    csv_buffer_branch = io.StringIO()
+                                    filtered_branch_df.to_csv(csv_buffer_branch, index=False)
+                                    st.download_button(
+                                        label="📥 Branch Summary (CSV)",
+                                        data=csv_buffer_branch.getvalue(),
+                                        file_name=f"branch_summary_{timestamp_local}.csv",
+                                        mime="text/csv",
+                                        use_container_width=True
+                                    )
+                                
+                                with col_csv2:
+                                    # Employee details CSV
+                                    csv_buffer_employee = io.StringIO()
+                                    filtered_employee_df.to_csv(csv_buffer_employee, index=False)
+                                    st.download_button(
+                                        label="📥 Employee Details (CSV)",
+                                        data=csv_buffer_employee.getvalue(),
+                                        file_name=f"employee_details_{timestamp_local}.csv",
+                                        mime="text/csv",
+                                        use_container_width=True
+                                    )
+                            
+                        else:
+                            st.info("ℹ️ No employee data available for the selected branches")
                 else:
                     st.info("ℹ️ No data available for referral report")
             
