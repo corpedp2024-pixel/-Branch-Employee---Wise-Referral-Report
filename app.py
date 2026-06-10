@@ -391,16 +391,22 @@ class ReportGenerator:
             st.error("❌ 'Referrer Phone' column not found in Referrals Report")
             return None
         
-        # 9. Employee Code (Match with Employees report)
+        # 9. Employee Code (Match with Employees report) - MODIFIED TO HANDLE "NA" AS VALID VALUE
         if 'Referral Code' in self.employees_df.columns and 'Employee Code' in self.employees_df.columns:
-            emp_code_dict = dict(zip(
-                self.employees_df['Referral Code'].astype(str), 
-                self.employees_df['Employee Code']
-            ))
-            final_report['Employee Code'] = final_report['Referral Code'].map(emp_code_dict)
+            # Create dictionary for mapping - treat all values as strings, including "NA"
+            emp_code_dict = {}
+            for idx, row in self.employees_df.iterrows():
+                referral_code = str(row['Referral Code']).strip()
+                employee_code = str(row['Employee Code']).strip() if pd.notna(row['Employee Code']) else ''
+                emp_code_dict[referral_code] = employee_code
+            
+            final_report['Employee Code'] = final_report['Referral Code'].astype(str).map(emp_code_dict)
+            
+            # Fill missing mappings with empty string (not NaN)
+            final_report['Employee Code'] = final_report['Employee Code'].fillna('')
         else:
             st.warning("⚠️ 'Referral Code' or 'Employee Code' missing in Employees Report")
-            final_report['Employee Code'] = np.nan
+            final_report['Employee Code'] = ''
         
         # 10. Branch (Match with Employees report and apply transformation)
         if 'Referral Code' in self.employees_df.columns and 'Branch' in self.employees_df.columns:
@@ -408,7 +414,7 @@ class ReportGenerator:
                 self.employees_df['Referral Code'].astype(str), 
                 self.employees_df['Branch']
             ))
-            final_report['Raw Branch'] = final_report['Referral Code'].map(branch_dict)
+            final_report['Raw Branch'] = final_report['Referral Code'].astype(str).map(branch_dict)
             final_report['Branch'] = final_report['Raw Branch'].apply(self.transform_branch)
             final_report.drop('Raw Branch', axis=1, inplace=True)
             st.success("✅ Branch transformation logic applied successfully (Proper Case)")
@@ -422,7 +428,7 @@ class ReportGenerator:
                 self.employees_df['Referral Code'].astype(str), 
                 self.employees_df['Employee Type']
             ))
-            final_report['Category'] = final_report['Referral Code'].map(emp_type_dict)
+            final_report['Category'] = final_report['Referral Code'].astype(str).map(emp_type_dict)
             final_report['Category'] = final_report['Category'].fillna('Customer')
         else:
             st.warning("⚠️ 'Referral Code' or 'Employee Type' missing in Employees Report")
@@ -591,7 +597,9 @@ class ReportGenerator:
 
     def generate_branch_employee_wise_scheme_report(self, final_report):
         """Generate Branch and Employee-wise Scheme Report"""
+        # Ensure Employee Code is treated as string, preserving "NA" values
         report_data = final_report[final_report['Scheme Name'].notna() & (final_report['Scheme Name'] != '')].copy()
+        report_data['Employee Code'] = report_data['Employee Code'].astype(str).fillna('')
         
         if len(report_data) == 0:
             return pd.DataFrame()
@@ -674,7 +682,11 @@ class ReportGenerator:
 
     def generate_employee_performance_report(self, final_report):
         """Generate Employee Performance Report"""
-        emp_performance = final_report.groupby(['Employee Name', 'Employee Code', 'Referral Code', 'Branch', 'Category']).agg({
+        # Ensure Employee Code is treated as string, preserving "NA" values
+        final_report_copy = final_report.copy()
+        final_report_copy['Employee Code'] = final_report_copy['Employee Code'].astype(str).fillna('')
+        
+        emp_performance = final_report_copy.groupby(['Employee Name', 'Employee Code', 'Referral Code', 'Branch', 'Category']).agg({
             'Customer Name': 'count',
             'Customer Enrollment Amount': 'sum',
             'Customer Payment': 'sum',
@@ -784,6 +796,9 @@ class ReportGenerator:
         """Generate Branch & Employee-wise Referral Report with date filtering"""
         
         filtered_report = final_report.copy()
+        # Ensure Employee Code is treated as string, preserving "NA" values
+        filtered_report['Employee Code'] = filtered_report['Employee Code'].astype(str).fillna('')
+        
         if start_date and end_date:
             filtered_report['Updated Date'] = pd.to_datetime(filtered_report['Updated Date'], errors='coerce')
             mask = (filtered_report['Updated Date'] >= pd.to_datetime(start_date)) & (filtered_report['Updated Date'] <= pd.to_datetime(end_date))
@@ -1295,34 +1310,34 @@ def main():
             with st.spinner("📂 Loading files..."):
                 progress_bar = st.progress(0)
                 
-                # Load Employees Report
+                # Load Employees Report - MODIFIED to preserve "NA" as string value
                 if employees_file.name.endswith('.csv'):
-                    employees_df = pd.read_csv(employees_file)
+                    employees_df = pd.read_csv(employees_file, keep_default_na=False, na_values=[])
                 else:
-                    employees_df = pd.read_excel(employees_file)
+                    employees_df = pd.read_excel(employees_file, keep_default_na=False, na_values=[])
                 progress_bar.progress(25)
                 
                 # Load Referrals Report
                 if referrals_file.name.endswith('.csv'):
-                    referrals_df = pd.read_csv(referrals_file)
+                    referrals_df = pd.read_csv(referrals_file, keep_default_na=False, na_values=[])
                 else:
-                    referrals_df = pd.read_excel(referrals_file)
+                    referrals_df = pd.read_excel(referrals_file, keep_default_na=False, na_values=[])
                 progress_bar.progress(50)
                 
                 # Load Transactions Report
                 if transactions_file.name.endswith('.csv'):
-                    transactions_df = pd.read_csv(transactions_file)
+                    transactions_df = pd.read_csv(transactions_file, keep_default_na=False, na_values=[])
                 else:
-                    transactions_df = pd.read_excel(transactions_file)
+                    transactions_df = pd.read_excel(transactions_file, keep_default_na=False, na_values=[])
                 progress_bar.progress(75)
                 
                 # Load BSS Report if provided
                 bss_df = None
                 if bss_file:
                     if bss_file.name.endswith('.csv'):
-                        bss_df = pd.read_csv(bss_file)
+                        bss_df = pd.read_csv(bss_file, keep_default_na=False, na_values=[])
                     else:
-                        bss_df = pd.read_excel(bss_file)
+                        bss_df = pd.read_excel(bss_file, keep_default_na=False, na_values=[])
                     st.success(f"✅ BSS Report loaded with {len(bss_df):,} records")
                 progress_bar.progress(100)
                 
@@ -1604,8 +1619,7 @@ def main():
                         data=csv_buffer.getvalue(),
                         file_name=f"branch_employee_scheme_{timestamp}.csv",
                         mime="text/csv",
-                        use_container_width=False
-                    )
+                        use_container_width=False                    )
                 else:
                     st.info("ℹ️ No employee scheme data available")
             
