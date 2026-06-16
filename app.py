@@ -1787,6 +1787,29 @@ def main():
                         
                         # Recalculate Grand Total for filtered data
                         if len(branch_data_filtered) > 0:
+                            # First, clean all amount columns in the filtered data
+                            for col in branch_data_filtered.columns:
+                                if 'Amount' in col and col != 'Amount %':
+                                    cleaned_values = []
+                                    for val in branch_data_filtered[col]:
+                                        if pd.isna(val) or val == '-' or val == '':
+                                            cleaned_values.append(0)
+                                        else:
+                                            try:
+                                                clean_val = str(val).replace('₹', '').replace(',', '').strip()
+                                                if clean_val and clean_val != '-':
+                                                    cleaned_values.append(float(clean_val))
+                                                else:
+                                                    cleaned_values.append(0)
+                                            except:
+                                                cleaned_values.append(0)
+                                    branch_data_filtered[col] = cleaned_values
+                            
+                            # Convert count columns to numeric
+                            for col in branch_data_filtered.columns:
+                                if 'Count' in col and col != 'Count %':
+                                    branch_data_filtered[col] = pd.to_numeric(branch_data_filtered[col], errors='coerce').fillna(0)
+                            
                             # Calculate new Grand Total row
                             new_grand_total = {'Branch': 'Grand Total'}
                             
@@ -1794,11 +1817,6 @@ def main():
                             for scheme in schemes:
                                 new_grand_total[f'{scheme} Count'] = 0
                                 new_grand_total[f'{scheme} Amount'] = 0
-                            
-                            # Convert columns to numeric before summing
-                            for col in branch_data_filtered.columns:
-                                if 'Count' in col or 'Amount' in col:
-                                    branch_data_filtered[col] = pd.to_numeric(branch_data_filtered[col], errors='coerce').fillna(0)
                             
                             new_grand_total['Total Enrolled Count'] = branch_data_filtered['Total Enrolled Count'].sum()
                             new_grand_total['Total Enrolled Amount'] = branch_data_filtered['Total Enrolled Amount'].sum()
@@ -1896,6 +1914,26 @@ def main():
                                 if 'Count' in col and col != 'Count %':
                                     branch_data[col] = pd.to_numeric(branch_data[col], errors='coerce').fillna(0)
                             
+                            # Convert amount columns to numeric by cleaning currency values
+                            for col in branch_data.columns:
+                                if 'Amount' in col and col != 'Amount %':
+                                    # Clean currency values and convert to numeric
+                                    cleaned_values = []
+                                    for val in branch_data[col]:
+                                        if pd.isna(val) or val == '-' or val == '':
+                                            cleaned_values.append(0)
+                                        else:
+                                            try:
+                                                # Remove ₹ symbol, commas, and any other non-numeric characters
+                                                clean_val = str(val).replace('₹', '').replace(',', '').strip()
+                                                if clean_val and clean_val != '-':
+                                                    cleaned_values.append(float(clean_val))
+                                                else:
+                                                    cleaned_values.append(0)
+                                            except:
+                                                cleaned_values.append(0)
+                                    branch_data[col] = cleaned_values
+                            
                             with col_a:
                                 # Number of branches selected
                                 total_branches = len(branch_data)
@@ -1916,25 +1954,10 @@ def main():
                                 st.metric("Not Enrolled", f"{int(total_not_enrolled):,}")
                             
                             with col_d:
-                                # Calculate total amount - need to clean currency values
+                                # Calculate total amount from cleaned numeric columns
                                 total_amount = 0
                                 if 'Total Enrolled Amount' in branch_data.columns:
-                                    for val in branch_data['Total Enrolled Amount']:
-                                        if val != '-' and pd.notna(val):
-                                            try:
-                                                # Remove ₹ symbol and commas, then convert to float
-                                                clean_val = str(val).replace('₹', '').replace(',', '').strip()
-                                                if clean_val and clean_val != '-':
-                                                    total_amount += float(clean_val)
-                                            except (ValueError, TypeError):
-                                                # If conversion fails, try to extract just the number
-                                                try:
-                                                    numbers = re.findall(r'[\d,]+', str(val))
-                                                    if numbers:
-                                                        clean_val = numbers[0].replace(',', '')
-                                                        total_amount += float(clean_val)
-                                                except:
-                                                    pass
+                                    total_amount = branch_data['Total Enrolled Amount'].sum()
                                 st.metric("Total Amount", f"₹{total_amount:,.0f}")
                             
                             # SINGLE DOWNLOAD BUTTON FOR BOTH REPORTS
