@@ -1816,7 +1816,7 @@ def main():
                             col_a, col_b, col_c, col_d = st.columns(4)
                             
                             # Calculate totals from branch-level data (excluding Grand Total row)
-                            branch_data = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total']
+                            branch_data = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total'].copy()
                             
                             with col_a:
                                 # Number of branches selected
@@ -1824,27 +1824,42 @@ def main():
                                 st.metric("Selected Branches", total_branches)
                             
                             with col_b:
-                                # Total enrolled count from branch data
-                                total_enrolled = branch_data['Total Enrolled Count'].sum() if 'Total Enrolled Count' in branch_data.columns else 0
+                                # Calculate total enrolled from numeric columns only
+                                total_enrolled = 0
+                                if 'Total Enrolled Count' in branch_data.columns:
+                                    # Convert to numeric, replacing any non-numeric with 0
+                                    total_enrolled = pd.to_numeric(branch_data['Total Enrolled Count'], errors='coerce').fillna(0).sum()
                                 st.metric("Total Enrolled", f"{int(total_enrolled):,}")
                             
                             with col_c:
-                                # Total not enrolled count from branch data
-                                total_not_enrolled = branch_data['Not Enrolled Count'].sum() if 'Not Enrolled Count' in branch_data.columns else 0
+                                # Calculate total not enrolled from numeric columns only
+                                total_not_enrolled = 0
+                                if 'Not Enrolled Count' in branch_data.columns:
+                                    # Convert to numeric, replacing any non-numeric with 0
+                                    total_not_enrolled = pd.to_numeric(branch_data['Not Enrolled Count'], errors='coerce').fillna(0).sum()
                                 st.metric("Not Enrolled", f"{int(total_not_enrolled):,}")
                             
                             with col_d:
-                                # Calculate total amount from branch data
+                                # Calculate total amount - need to clean currency values
                                 total_amount = 0
                                 if 'Total Enrolled Amount' in branch_data.columns:
                                     for val in branch_data['Total Enrolled Amount']:
                                         if val != '-' and pd.notna(val):
                                             try:
-                                                # Remove ₹ and commas
-                                                clean_val = str(val).replace('₹', '').replace(',', '')
-                                                total_amount += float(clean_val)
-                                            except:
-                                                pass
+                                                # Remove ₹ symbol and commas, then convert to float
+                                                clean_val = str(val).replace('₹', '').replace(',', '').strip()
+                                                if clean_val and clean_val != '-':
+                                                    total_amount += float(clean_val)
+                                            except (ValueError, TypeError):
+                                                # If conversion fails, try to extract just the number
+                                                try:
+                                                    import re
+                                                    numbers = re.findall(r'[\d,]+', str(val))
+                                                    if numbers:
+                                                        clean_val = numbers[0].replace(',', '')
+                                                        total_amount += float(clean_val)
+                                                except:
+                                                    pass
                                 st.metric("Total Amount", f"₹{total_amount:,.0f}")
                             
                             # SINGLE DOWNLOAD BUTTON FOR BOTH REPORTS
