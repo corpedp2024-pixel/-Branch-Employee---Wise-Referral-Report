@@ -1811,27 +1811,33 @@ def main():
                             # Display filtered employee data
                             st.dataframe(filtered_employee_df, use_container_width=True)
                             
-                            # Summary statistics for selected branches
+                            # Summary statistics for selected branches - FIXED VERSION
                             st.markdown("#### 📊 Summary for Selected Branches")
                             col_a, col_b, col_c, col_d = st.columns(4)
                             
+                            # Calculate totals from branch-level data (excluding Grand Total row)
+                            branch_data = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total']
+                            
                             with col_a:
-                                total_employees = filtered_employee_df['Employee Name'].nunique()
-                                st.metric("Total Employees", total_employees)
+                                # Number of branches selected
+                                total_branches = len(branch_data)
+                                st.metric("Selected Branches", total_branches)
                             
                             with col_b:
-                                total_enrolled = filtered_employee_df['Total Enrolled Count'].sum() if 'Total Enrolled Count' in filtered_employee_df.columns else 0
+                                # Total enrolled count from branch data
+                                total_enrolled = branch_data['Total Enrolled Count'].sum() if 'Total Enrolled Count' in branch_data.columns else 0
                                 st.metric("Total Enrolled", f"{int(total_enrolled):,}")
                             
                             with col_c:
-                                total_not_enrolled = filtered_employee_df['Not Enrolled Count'].sum() if 'Not Enrolled Count' in filtered_employee_df.columns else 0
+                                # Total not enrolled count from branch data
+                                total_not_enrolled = branch_data['Not Enrolled Count'].sum() if 'Not Enrolled Count' in branch_data.columns else 0
                                 st.metric("Not Enrolled", f"{int(total_not_enrolled):,}")
                             
                             with col_d:
-                                # Calculate total amount (remove ₹ symbol and commas)
+                                # Calculate total amount from branch data
                                 total_amount = 0
-                                if 'Total Enrolled Amount' in filtered_employee_df.columns:
-                                    for val in filtered_employee_df['Total Enrolled Amount']:
+                                if 'Total Enrolled Amount' in branch_data.columns:
+                                    for val in branch_data['Total Enrolled Amount']:
                                         if val != '-' and pd.notna(val):
                                             try:
                                                 # Remove ₹ and commas
