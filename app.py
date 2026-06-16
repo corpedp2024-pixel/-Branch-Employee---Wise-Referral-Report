@@ -1795,6 +1795,11 @@ def main():
                                 new_grand_total[f'{scheme} Count'] = 0
                                 new_grand_total[f'{scheme} Amount'] = 0
                             
+                            # Convert columns to numeric before summing
+                            for col in branch_data_filtered.columns:
+                                if 'Count' in col or 'Amount' in col:
+                                    branch_data_filtered[col] = pd.to_numeric(branch_data_filtered[col], errors='coerce').fillna(0)
+                            
                             new_grand_total['Total Enrolled Count'] = branch_data_filtered['Total Enrolled Count'].sum()
                             new_grand_total['Total Enrolled Amount'] = branch_data_filtered['Total Enrolled Amount'].sum()
                             new_grand_total['Not Enrolled Count'] = branch_data_filtered['Not Enrolled Count'].sum()
@@ -1886,6 +1891,11 @@ def main():
                             # Calculate totals from filtered branch-level data (excluding Grand Total row)
                             branch_data = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total'].copy()
                             
+                            # Convert count columns to numeric
+                            for col in branch_data.columns:
+                                if 'Count' in col and col != 'Count %':
+                                    branch_data[col] = pd.to_numeric(branch_data[col], errors='coerce').fillna(0)
+                            
                             with col_a:
                                 # Number of branches selected
                                 total_branches = len(branch_data)
@@ -1895,16 +1905,14 @@ def main():
                                 # Calculate total enrolled from numeric columns only
                                 total_enrolled = 0
                                 if 'Total Enrolled Count' in branch_data.columns:
-                                    # Convert to numeric, replacing any non-numeric with 0
-                                    total_enrolled = pd.to_numeric(branch_data['Total Enrolled Count'], errors='coerce').fillna(0).sum()
+                                    total_enrolled = branch_data['Total Enrolled Count'].sum()
                                 st.metric("Total Enrolled", f"{int(total_enrolled):,}")
                             
                             with col_c:
                                 # Calculate total not enrolled from numeric columns only
                                 total_not_enrolled = 0
                                 if 'Not Enrolled Count' in branch_data.columns:
-                                    # Convert to numeric, replacing any non-numeric with 0
-                                    total_not_enrolled = pd.to_numeric(branch_data['Not Enrolled Count'], errors='coerce').fillna(0).sum()
+                                    total_not_enrolled = branch_data['Not Enrolled Count'].sum()
                                 st.metric("Not Enrolled", f"{int(total_not_enrolled):,}")
                             
                             with col_d:
@@ -1921,7 +1929,6 @@ def main():
                                             except (ValueError, TypeError):
                                                 # If conversion fails, try to extract just the number
                                                 try:
-                                                    import re
                                                     numbers = re.findall(r'[\d,]+', str(val))
                                                     if numbers:
                                                         clean_val = numbers[0].replace(',', '')
