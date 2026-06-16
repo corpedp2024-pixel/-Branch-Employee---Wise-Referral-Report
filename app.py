@@ -1779,6 +1779,74 @@ def main():
                             (branch_df['Branch'] == 'Grand Total')
                         ].copy()
                         
+                        # RECALCULATE GRAND TOTAL FOR FILTERED DATA
+                        # Get only the branch data (excluding Grand Total)
+                        branch_data_only = branch_df[branch_df['Branch'] != 'Grand Total'].copy()
+                        # Filter to selected branches
+                        branch_data_filtered = branch_data_only[branch_data_only['Branch'].isin(selected_branches)].copy()
+                        
+                        # Recalculate Grand Total for filtered data
+                        if len(branch_data_filtered) > 0:
+                            # Calculate new Grand Total row
+                            new_grand_total = {'Branch': 'Grand Total'}
+                            
+                            # Initialize all scheme counts and amounts to 0
+                            for scheme in schemes:
+                                new_grand_total[f'{scheme} Count'] = 0
+                                new_grand_total[f'{scheme} Amount'] = 0
+                            
+                            new_grand_total['Total Enrolled Count'] = branch_data_filtered['Total Enrolled Count'].sum()
+                            new_grand_total['Total Enrolled Amount'] = branch_data_filtered['Total Enrolled Amount'].sum()
+                            new_grand_total['Not Enrolled Count'] = branch_data_filtered['Not Enrolled Count'].sum()
+                            
+                            # Calculate scheme totals for filtered data
+                            for scheme in schemes:
+                                count_col = f'{scheme} Count'
+                                amount_col = f'{scheme} Amount'
+                                if count_col in branch_data_filtered.columns:
+                                    new_grand_total[count_col] = branch_data_filtered[count_col].sum()
+                                if amount_col in branch_data_filtered.columns:
+                                    new_grand_total[amount_col] = branch_data_filtered[amount_col].sum()
+                            
+                            # Calculate percentages for filtered data
+                            total_count = new_grand_total['Total Enrolled Count']
+                            total_amount = new_grand_total['Total Enrolled Amount']
+                            
+                            if total_count > 0:
+                                new_grand_total['Count %'] = '100%'
+                            else:
+                                new_grand_total['Count %'] = '0%'
+                                
+                            if total_amount > 0:
+                                new_grand_total['Amount %'] = '100%'
+                            else:
+                                new_grand_total['Amount %'] = '0%'
+                            
+                            # Update branch percentages based on filtered data
+                            for idx, row in branch_data_filtered.iterrows():
+                                branch_name = row['Branch']
+                                count_val = row['Total Enrolled Count']
+                                amount_val = row['Total Enrolled Amount']
+                                
+                                if total_count > 0:
+                                    count_pct = round((count_val / total_count) * 100)
+                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Count %'] = f"{count_pct}%"
+                                else:
+                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Count %'] = "0%"
+                                
+                                if total_amount > 0:
+                                    amount_pct = round((amount_val / total_amount) * 100)
+                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Amount %'] = f"{amount_pct}%"
+                                else:
+                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Amount %'] = "0%"
+                            
+                            # Replace the Grand Total row with the recalculated one
+                            # Remove existing Grand Total row
+                            filtered_branch_df = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total']
+                            # Add the new Grand Total row
+                            new_grand_total_df = pd.DataFrame([new_grand_total])
+                            filtered_branch_df = pd.concat([filtered_branch_df, new_grand_total_df], ignore_index=True)
+                        
                         # Filter employee_df based on selected branches
                         filtered_employee_df = employee_df[employee_df['Branch'].isin(selected_branches)].copy()
                         
@@ -1811,11 +1879,11 @@ def main():
                             # Display filtered employee data
                             st.dataframe(filtered_employee_df, use_container_width=True)
                             
-                            # Summary statistics for selected branches - FIXED VERSION
+                            # Summary statistics for selected branches
                             st.markdown("#### 📊 Summary for Selected Branches")
                             col_a, col_b, col_c, col_d = st.columns(4)
                             
-                            # Calculate totals from branch-level data (excluding Grand Total row)
+                            # Calculate totals from filtered branch-level data (excluding Grand Total row)
                             branch_data = filtered_branch_df[filtered_branch_df['Branch'] != 'Grand Total'].copy()
                             
                             with col_a:
