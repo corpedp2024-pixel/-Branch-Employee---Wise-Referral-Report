@@ -581,10 +581,11 @@ class ReportGenerator:
             'Number of Matched Payments', 'Unique Employees', 'Unique Referral Codes'
         ]
         
+        # Removed .round(2) to prevent rounding
         branch_scheme_report['Match Rate (%)'] = (
             branch_scheme_report['Number of Matched Payments'] / 
             branch_scheme_report['Number of Customers'] * 100
-        ).round(2)
+        )
         
         branch_scheme_report['Pending Amount'] = (
             branch_scheme_report['Total Enrollment Amount'] - 
@@ -618,15 +619,17 @@ class ReportGenerator:
             'Number of Matched Payments', 'Unique Customers'
         ]
         
+        # Removed .round(2) to prevent rounding
         emp_scheme_report['Match Rate (%)'] = (
             emp_scheme_report['Number of Matched Payments'] / 
             emp_scheme_report['Number of Customers'] * 100
-        ).round(2)
+        )
         
+        # Removed .round(2) to prevent rounding
         emp_scheme_report['Average Enrollment Amount'] = (
             emp_scheme_report['Total Enrollment Amount'] / 
             emp_scheme_report['Number of Customers']
-        ).round(2)
+        )
         
         emp_scheme_report['Pending Amount'] = (
             emp_scheme_report['Total Enrollment Amount'] - 
@@ -659,22 +662,25 @@ class ReportGenerator:
             'Unique Referral Codes', 'Schemes Sold', 'Not Enrolled'
         ]
         
+        # Removed .round(2) to prevent rounding
         branch_summary['Match Rate (%)'] = (
             branch_summary['Matched Payments'] / branch_summary['Total Customers'] * 100
-        ).round(2)
+        )
         
+        # Removed .round(2) to prevent rounding
         branch_summary['Enrollment Rate (%)'] = (
             (branch_summary['Total Customers'] - branch_summary['Not Enrolled']) / 
             branch_summary['Total Customers'] * 100
-        ).round(2)
+        )
         
         branch_summary['Pending Amount'] = (
             branch_summary['Total Enrollment Amount'] - branch_summary['Total Payment Received']
         )
         
+        # Removed .round(2) to prevent rounding
         branch_summary['Average Enrollment Amount'] = (
             branch_summary['Total Enrollment Amount'] / branch_summary['Total Customers']
-        ).round(2)
+        )
         
         branch_summary = branch_summary.sort_values('Total Customers', ascending=False)
         
@@ -701,18 +707,21 @@ class ReportGenerator:
             'Matched Payments', 'Schemes Sold', 'Not Enrolled'
         ]
         
+        # Removed .round(2) to prevent rounding
         emp_performance['Match Rate (%)'] = (
             emp_performance['Matched Payments'] / emp_performance['Total Customers'] * 100
-        ).round(2)
+        )
         
+        # Removed .round(2) to prevent rounding
         emp_performance['Enrollment Rate (%)'] = (
             (emp_performance['Total Customers'] - emp_performance['Not Enrolled']) / 
             emp_performance['Total Customers'] * 100
-        ).round(2)
+        )
         
+        # Removed .round(2) to prevent rounding
         emp_performance['Average Enrollment Amount'] = (
             emp_performance['Total Enrollment Amount'] / emp_performance['Total Customers']
-        ).round(2)
+        )
         
         emp_performance['Pending Amount'] = (
             emp_performance['Total Enrollment Amount'] - emp_performance['Total Payment Received']
@@ -778,9 +787,10 @@ class ReportGenerator:
             branch_reg_pivot['Total Not Enrolled']
         )
         
+        # Removed .round(2) to prevent rounding
         branch_reg_pivot['Enrollment Rate (%)'] = (
             branch_reg_pivot['Total Enrolled'] / branch_reg_pivot['Total Customers'] * 100
-        ).round(2)
+        )
         
         branch_reg_pivot = branch_reg_pivot.sort_values('Total Customers', ascending=False)
         
@@ -1512,11 +1522,12 @@ def main():
                     """.format(int(matched)), unsafe_allow_html=True)
                 
                 with col5:
+                    # Removed rounding - showing 2 decimal places
                     match_percent = (matched / len(display_report) * 100) if len(display_report) > 0 else 0
                     st.markdown("""
                     <div class="metric-card">
                         <h3>Match Rate</h3>
-                        <div class="value">{:.1f}%</div>
+                        <div class="value">{:.2f}%</div>
                     </div>
                     """.format(match_percent), unsafe_allow_html=True)
                 
@@ -1705,8 +1716,9 @@ def main():
                 with col3:
                     st.metric("Not Enrolled", f"{len(not_enrolled_customers):,}")
                 with col4:
+                    # Removed rounding - showing 2 decimal places
                     enrollment_rate = (enrolled/len(filtered_data)*100) if len(filtered_data) > 0 else 0
-                    st.metric("Enrollment Rate", f"{enrollment_rate:.1f}%")
+                    st.metric("Enrollment Rate", f"{enrollment_rate:.2f}%")
                 
                 st.markdown("#### Branch-wise Registration Status")
                 st.dataframe(reg_pivot, use_container_width=True)
@@ -1845,21 +1857,21 @@ def main():
                             else:
                                 new_grand_total['Amount %'] = '0%'
                             
-                            # Update branch percentages based on filtered data
+                            # Update branch percentages based on filtered data - NO ROUNDING
                             for idx, row in branch_data_filtered.iterrows():
                                 branch_name = row['Branch']
                                 count_val = row['Total Enrolled Count']
                                 amount_val = row['Total Enrolled Amount']
                                 
                                 if total_count > 0:
-                                    count_pct = round((count_val / total_count) * 100)
-                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Count %'] = f"{count_pct}%"
+                                    count_pct = (count_val / total_count) * 100
+                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Count %'] = f"{count_pct:.1f}%"
                                 else:
                                     filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Count %'] = "0%"
                                 
                                 if total_amount > 0:
-                                    amount_pct = round((amount_val / total_amount) * 100)
-                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Amount %'] = f"{amount_pct}%"
+                                    amount_pct = (amount_val / total_amount) * 100
+                                    filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Amount %'] = f"{amount_pct:.1f}%"
                                 else:
                                     filtered_branch_df.loc[filtered_branch_df['Branch'] == branch_name, 'Amount %'] = "0%"
                             
